@@ -5,11 +5,11 @@ export function generateCode() {
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
 }
 
-export async function createSession(masterName, context) {
+export async function createSession(masterName, context, groupId) {
   const code = generateCode()
   const { data: session, error: sessionError } = await supabase
     .from('sessions')
-    .insert({ code, context })
+    .insert({ code, context, group_id: groupId })
     .select()
     .single()
   if (sessionError) throw sessionError
@@ -121,4 +121,27 @@ export async function getContext(playerId) {
     .single()
   if (error) console.error('❌ erreur getContext', error)
   return data?.context ?? {}
+}
+export async function getActiveSession(groupId) {
+  const { data, error } = await supabase
+    .from('sessions')
+    .select()
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single()
+  if (error) return null
+  return data
+}
+
+export function subscribeToGroupSessions(groupId, onChange) {
+  return supabase
+    .channel(`group_sessions:${groupId}`)
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'sessions',
+      filter: `group_id=eq.${groupId}`,
+    }, onChange)
+    .subscribe()
 }
