@@ -24,4 +24,9 @@ export const ACTIONS = [
     label: '4Bet',
     color: '#ef4444',
   },
+  {
+    id: 'ALL_IN',
+    label: 'All In',
+    color: '#a855f7',
+  },
 ]

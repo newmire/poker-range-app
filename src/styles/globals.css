@@ -12,3 +12,17 @@ body {
 * {
   box-sizing: border-box;
 }
+
+.content {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 24px;
+  padding: 20px;
+}
+
+.gridContainer {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}

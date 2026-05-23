@@ -11,23 +11,20 @@ export function generateMatrix() {
     for (let j = 0; j < ranks.length; j++) {
       const r1 = ranks[i];
       const r2 = ranks[j];
-
       let label = "";
 
       if (i === j) {
-        // 🔥 PAIRS (diagonale)
         label = r1 + r2;
       } else if (i < j) {
-        // 🔼 SUITED (triangle haut)
         label = r1 + r2 + "s";
       } else {
-        // 🔽 OFFSUIT (triangle bas)
         label = r2 + r1 + "o";
       }
 
       row.push({
         label,
-        value: 0
+        value: 0,
+        actions: [],
       });
     }
 
