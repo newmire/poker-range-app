@@ -35,6 +35,29 @@ function getStatus(lastSeen) {
   return { color: '#444' }
 }
 
+// ─── Icônes œil SVG style Lucide ─────────────────────────────────────────────
+
+function EyeOpen({ color = '#22c55e' }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+      <circle cx="12" cy="12" r="3"/>
+    </svg>
+  )
+}
+
+function EyeClosed({ color = '#444' }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+      <line x1="1" y1="1" x2="23" y2="23"/>
+    </svg>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function DashboardPage({ session, player, membership, authUser, onLeave, onLogout }) {
   const clearMatrix = useRangeStore((state) => state.clearMatrix)
   const setPlayerId = useRangeStore((state) => state.setPlayerId)
@@ -52,8 +75,12 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [players, setPlayers] = useState([])
   const [members, setMembers] = useState([])
-  const [highlightedPlayerId, setHighlightedPlayerId] = useState(player?.id ?? null)
-  const [highlightedPlayer, setHighlightedPlayer] = useState(null)
+
+  const [localViewedId, setLocalViewedId] = useState(player?.id ?? null)
+  const [localViewedPlayer, setLocalViewedPlayer] = useState(null)
+  const [broadcastedId, setBroadcastedId] = useState(null)
+  const [viewedPlayerId, setViewedPlayerId] = useState(null)
+
   const [activeGrid, setActiveGrid] = useState('reg')
   const [showSaveModal, setShowSaveModal] = useState(false)
   const [showLibrary, setShowLibrary] = useState(false)
@@ -72,7 +99,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => clearInterval(interval)
   }, [membership])
 
-  // Chargement des membres pour les statuts
+  // Chargement des membres pour les statuts (master seulement)
   useEffect(() => {
     if (!membership?.group_id || !master) return
     getMembers(membership.group_id).then(setMembers)
@@ -86,15 +113,15 @@ export default function DashboardPage({ session, player, membership, authUser, o
     if (player?.id) setPlayerId(player.id)
   }, [player])
 
-  // Chargement initial des joueurs — initialise highlightedPlayer avec le joueur courant
+  // Chargement initial des joueurs
   useEffect(() => {
     if (!session) return
     getPlayers(session.id).then((p) => {
       setPlayers(p)
       const current = p.find((pl) => pl.id === player.id)
       if (current) {
-        setHighlightedPlayer(current)
-        setHighlightedPlayerId(current.id)
+        setLocalViewedPlayer(current)
+        setLocalViewedId(current.id)
         setActivePlayerIdInStore(current.id)
       }
     })
@@ -106,10 +133,10 @@ export default function DashboardPage({ session, player, membership, authUser, o
     const sub = subscribeToPlayers(session.id, (payload) => {
       getPlayers(session.id).then((updatedPlayers) => {
         setPlayers(updatedPlayers)
-        if (master && payload.new?.id === highlightedPlayerId) {
+        if (master && payload.new?.id === localViewedId) {
           const updated = updatedPlayers.find((p) => p.id === payload.new.id)
           if (updated) {
-            setHighlightedPlayer(updated)
+            setLocalViewedPlayer(updated)
             const v = updated?.context?.versus ?? 'reg'
             const range = v === 'fish' ? updated.range_fish : updated.range_reg
             if (range?.length > 0) setMatrix(range)
@@ -121,21 +148,30 @@ export default function DashboardPage({ session, player, membership, authUser, o
       })
     })
     return () => sub.unsubscribe()
-  }, [session, master, highlightedPlayerId])
+  }, [session, master, localViewedId])
 
-  // Realtime : changement du joueur actif
+  // Realtime : changement du joueur broadcasted
   useEffect(() => {
     if (!session) return
     const sub = subscribeToSession(session.id, (payload) => {
       const newActiveId = payload.new.active_player_id
-      setHighlightedPlayerId(newActiveId)
-      if (!master && newActiveId) {
-        const activePlayer = players.find((p) => p.id === newActiveId)
-        if (activePlayer?.range_reg) setMatrix(activePlayer.range_reg)
+      setBroadcastedId(newActiveId)
+      if (!master) {
+        if (newActiveId) {
+          // Broadcast actif : affiche la range imposée
+          const activePlayer = players.find((p) => p.id === newActiveId)
+          if (activePlayer?.range_reg) setMatrix(activePlayer.range_reg)
+          setViewedPlayerId(null)
+        } else {
+          // Broadcast stoppé : chaque joueur retrouve sa propre range
+          const self = players.find((p) => p.id === player.id)
+          if (self?.range_reg) setMatrix(self.range_reg)
+          setViewedPlayerId(null)
+        }
       }
     })
     return () => sub.unsubscribe()
-  }, [session, player, players])
+  }, [session, player, players, master])
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768)
@@ -148,15 +184,14 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return member ? getStatus(member.last_seen) : { color: '#444' }
   }
 
+  // Master : navigation locale sans broadcast
   const handleSelectPlayer = async (p) => {
-    // Sauvegarde la range courante avant de changer de joueur
     const { matrix, activePlayerId } = useRangeStore.getState()
     if (activePlayerId) await saveRange(activePlayerId, matrix, activeGrid)
 
     setActivePlayerIdInStore(p.id)
-    setHighlightedPlayerId(p.id)
-    setHighlightedPlayer(p)
-    await setActivePlayer(session.id, p.id)
+    setLocalViewedId(p.id)
+    setLocalViewedPlayer(p)
 
     const v = p.context?.versus ?? 'reg'
     const range = v === 'fish' ? p.range_fish : p.range_reg
@@ -171,18 +206,29 @@ export default function DashboardPage({ session, player, membership, authUser, o
     setActiveGrid(v)
   }
 
+  // Master : toggle broadcast via l'œil
+  const handleBroadcast = async (p) => {
+    if (broadcastedId === p.id) {
+      // Toggle off : stop le broadcast, chacun retrouve sa range
+      await setActivePlayer(session.id, null)
+      setBroadcastedId(null)
+    } else {
+      // Toggle on : broadcast ce joueur à tous
+      await setActivePlayer(session.id, p.id)
+      setBroadcastedId(p.id)
+    }
+  }
+
   const handleSelectGrid = async (gridVersus) => {
     if (gridVersus === activeGrid) return
 
     const { matrix, activePlayerId } = useRangeStore.getState()
-
-    // Sauvegarde la grille courante avant de switcher
     await saveRange(activePlayerId, matrix, activeGrid)
 
     const updated = await getPlayers(session.id)
     setPlayers(updated)
-    const freshPlayer = updated.find((p) => p.id === highlightedPlayerId)
-    if (freshPlayer) setHighlightedPlayer(freshPlayer)
+    const freshPlayer = updated.find((p) => p.id === localViewedId)
+    if (freshPlayer) setLocalViewedPlayer(freshPlayer)
 
     const range = gridVersus === 'fish'
       ? (freshPlayer?.range_fish?.length > 0 ? freshPlayer.range_fish : generateMatrix())
@@ -229,12 +275,24 @@ export default function DashboardPage({ session, player, membership, authUser, o
     setShowLibrary(false)
   }
 
+  // Non-master : observer la range d'un autre joueur localement
+  const handleViewPlayer = (p) => {
+    if (p.id === viewedPlayerId) {
+      setViewedPlayerId(null)
+      const self = players.find((pl) => pl.id === player.id)
+      if (self?.range_reg) setMatrix(self.range_reg)
+      return
+    }
+    setViewedPlayerId(p.id)
+    const range = p.range_reg
+    if (range?.length > 0) setMatrix(range)
+  }
+
   const sortedPlayers = [
     ...players.filter((p) => p.id === player.id),
     ...players.filter((p) => p.id !== player.id),
   ]
 
-  // Affiche deux grilles dès que le master est sur desktop — même sans autre joueur
   const showBothGrids = master && !isMobile
 
   return (
@@ -249,6 +307,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
       gap: '20px',
     }}>
 
+      {/* ── Panneau latéral ── */}
       <div style={{
         width: isMobile ? '100%' : '180px',
         flexShrink: 0,
@@ -319,34 +378,89 @@ export default function DashboardPage({ session, player, membership, authUser, o
           >Fish</button>
         </div>
 
+        {/* ── Liste joueurs master ── */}
         {master && (
           <div style={styles.playerList}>
             <hr style={{ width: '100%', opacity: 0.15, margin: '4px 0' }} />
-            <p style={styles.playerListTitle}>Voir la range de</p>
+            <p style={styles.playerListTitle}>Joueurs</p>
             {sortedPlayers.map((p) => {
               const status = getMemberStatus(p.name)
+              const isLocalViewed = localViewedId === p.id
+              const isBroadcasted = broadcastedId === p.id
+
               return (
-                <button
+                <div
                   key={p.id}
                   style={{
-                    ...styles.playerBtn,
-                    borderColor: highlightedPlayerId === p.id ? '#22c55e' : '#333',
-                    color: highlightedPlayerId === p.id ? '#22c55e' : '#ccc',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 10px',
+                    borderRadius: '8px',
+                    border: `1px solid ${isLocalViewed ? '#22c55e' : '#2a2a2a'}`,
+                    backgroundColor: '#1a1a1a',
+                    cursor: 'pointer',
                   }}
                   onClick={() => handleSelectPlayer(p)}
                 >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: status.color, flexShrink: 0 }} />
+                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: status.color, flexShrink: 0 }} />
+                  <span style={{ flex: 1, fontSize: '13px', color: isLocalViewed ? '#22c55e' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {p.id === player.id ? `${p.name} (moi)` : p.name}
                   </span>
-                </button>
+                  <button
+                    style={{ background: 'transparent', border: 'none', padding: '2px', cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0 }}
+                    onClick={(e) => { e.stopPropagation(); handleBroadcast(p) }}
+                    title={isBroadcasted ? 'Stopper le broadcast' : 'Imposer cette vue à tous'}
+                  >
+                    {isBroadcasted ? <EyeOpen color="#22c55e" /> : <EyeClosed color="#444" />}
+                  </button>
+                </div>
               )
             })}
             {sortedPlayers.length === 0 && <p style={styles.noPlayers}>En attente de joueurs...</p>}
           </div>
         )}
+
+        {/* ── Liste joueurs non-master ── */}
+        {!master && players.length > 0 && (
+          <div style={styles.playerList}>
+            <hr style={{ width: '100%', opacity: 0.15, margin: '4px 0' }} />
+            <p style={styles.playerListTitle}>Joueurs connectés</p>
+            {sortedPlayers.map((p) => {
+              const isMe = p.id === player.id
+              const isViewed = viewedPlayerId === p.id
+              const isBroadcasted = broadcastedId === p.id
+
+              return (
+                <div
+                  key={p.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 10px',
+                    borderRadius: '8px',
+                    border: `1px solid ${isViewed ? '#3b82f6' : '#2a2a2a'}`,
+                    backgroundColor: '#1a1a1a',
+                    cursor: isMe ? 'default' : 'pointer',
+                  }}
+                  onClick={isMe ? undefined : () => handleViewPlayer(p)}
+                >
+                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: isMe ? '#22c55e' : '#444', flexShrink: 0 }} />
+                  <span style={{ flex: 1, fontSize: '13px', color: isViewed ? '#3b82f6' : isMe ? '#22c55e' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {isMe ? `${p.name} (moi)` : p.name}
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                    {isBroadcasted ? <EyeOpen color="#22c55e" /> : <EyeClosed color="#333" />}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
+      {/* ── Zone grille ── */}
       {showBothGrids ? (
         <div style={{ display: 'flex', gap: '16px', flex: 1, alignItems: 'flex-start' }}>
           <div
@@ -354,12 +468,8 @@ export default function DashboardPage({ session, player, membership, authUser, o
             onClick={() => handleSelectGrid('reg')}
           >
             <span style={{ ...styles.gridLabel, color: activeGrid === 'reg' ? '#22c55e' : '#aaa' }}>🟢 Reg</span>
-            <div style={{
-              borderRadius: '14px',
-              border: activeGrid === 'reg' ? '2px solid #22c55e' : '2px solid transparent',
-              transition: '0.15s',
-            }}>
-              <RangeGrid overrideMatrix={activeGrid === 'reg' ? undefined : (highlightedPlayer?.range_reg ?? undefined)} readOnly={activeGrid !== 'reg'} />
+            <div style={{ borderRadius: '14px', border: activeGrid === 'reg' ? '2px solid #22c55e' : '2px solid transparent', transition: '0.15s' }}>
+              <RangeGrid overrideMatrix={activeGrid === 'reg' ? undefined : (localViewedPlayer?.range_reg ?? undefined)} readOnly={activeGrid !== 'reg'} />
             </div>
           </div>
           <div
@@ -367,17 +477,28 @@ export default function DashboardPage({ session, player, membership, authUser, o
             onClick={() => handleSelectGrid('fish')}
           >
             <span style={{ ...styles.gridLabel, color: activeGrid === 'fish' ? '#f97316' : '#aaa' }}>🟠 Fish</span>
-            <div style={{
-              borderRadius: '14px',
-              border: activeGrid === 'fish' ? '2px solid #f97316' : '2px solid transparent',
-              transition: '0.15s',
-            }}>
-              <RangeGrid overrideMatrix={activeGrid === 'fish' ? undefined : (highlightedPlayer?.range_fish ?? undefined)} readOnly={activeGrid !== 'fish'} />
+            <div style={{ borderRadius: '14px', border: activeGrid === 'fish' ? '2px solid #f97316' : '2px solid transparent', transition: '0.15s' }}>
+              <RangeGrid overrideMatrix={activeGrid === 'fish' ? undefined : (localViewedPlayer?.range_fish ?? undefined)} readOnly={activeGrid !== 'fish'} />
             </div>
           </div>
         </div>
       ) : (
-        <RangeGrid />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+          {viewedPlayerId && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ color: '#3b82f6', fontSize: '13px' }}>
+                👁️ Range de {players.find(p => p.id === viewedPlayerId)?.name}
+              </span>
+              <button
+                style={{ background: 'transparent', border: '1px solid #333', borderRadius: '6px', color: '#666', fontSize: '11px', padding: '3px 8px', cursor: 'pointer' }}
+                onClick={() => handleViewPlayer(players.find(p => p.id === viewedPlayerId))}
+              >
+                Retour
+              </button>
+            </div>
+          )}
+          <RangeGrid readOnly={!!viewedPlayerId} />
+        </div>
       )}
 
       <BottomActionBar />
@@ -397,22 +518,12 @@ export default function DashboardPage({ session, player, membership, authUser, o
             />
             <div style={styles.toggleRow}>
               <button
-                style={{
-                  ...styles.toggleBtn,
-                  backgroundColor: !saveShared ? '#22c55e' : '#1a1a1a',
-                  color: !saveShared ? 'white' : '#666',
-                  border: !saveShared ? 'none' : '1px solid #333',
-                }}
+                style={{ ...styles.toggleBtn, backgroundColor: !saveShared ? '#22c55e' : '#1a1a1a', color: !saveShared ? 'white' : '#666', border: !saveShared ? 'none' : '1px solid #333' }}
                 onClick={() => setSaveShared(false)}
               >Personnelle</button>
               {membership.role === 'master' && (
                 <button
-                  style={{
-                    ...styles.toggleBtn,
-                    backgroundColor: saveShared ? '#3b82f6' : '#1a1a1a',
-                    color: saveShared ? 'white' : '#666',
-                    border: saveShared ? 'none' : '1px solid #333',
-                  }}
+                  style={{ ...styles.toggleBtn, backgroundColor: saveShared ? '#3b82f6' : '#1a1a1a', color: saveShared ? 'white' : '#666', border: saveShared ? 'none' : '1px solid #333' }}
                   onClick={() => setSaveShared(true)}
                 >Partagée</button>
               )}
@@ -428,18 +539,11 @@ export default function DashboardPage({ session, player, membership, authUser, o
       )}
 
       {showLibrary && (
-        <LibraryPage
-          membership={membership}
-          onClose={() => setShowLibrary(false)}
-          onUseRange={handleUseRange}
-        />
+        <LibraryPage membership={membership} onClose={() => setShowLibrary(false)} onUseRange={handleUseRange} />
       )}
 
       {showMembers && (
-        <MembersPage
-          membership={membership}
-          onClose={() => setShowMembers(false)}
-        />
+        <MembersPage membership={membership} onClose={() => setShowMembers(false)} />
       )}
     </div>
   )
