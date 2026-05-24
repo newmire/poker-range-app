@@ -24,15 +24,15 @@ export default function RangeGrid({ overrideMatrix, readOnly, compact }) {
   const isLandscape = windowWidth > windowHeight
 
   let cellSize
-  if (isMobile) {
-    cellSize = isLandscape ? 32 : 24
-  } else if (compact) {
-    const availableWidth = Math.min(windowWidth - 280, 500)
+  if (compact) {
+    const availableWidth = Math.min(windowWidth - 32, 500)
     const availableHeight = windowHeight - 200
     const sizeByWidth = Math.floor((availableWidth - 12 * 6 - 20) / 13)
     const sizeByHeight = Math.floor((availableHeight - 12 * 6 - 20) / 13)
     cellSize = Math.min(sizeByWidth, sizeByHeight, 48)
-    cellSize = Math.max(cellSize, 28)
+    cellSize = Math.max(cellSize, 20)
+  } else if (isMobile) {
+    cellSize = isLandscape ? 32 : 24
   } else {
     const gridCount = overrideMatrix !== undefined ? 2 : 1
     const availableWidth = (windowWidth - 180 - 80) / gridCount - (gridCount > 1 ? 20 : 0)
