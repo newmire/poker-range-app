@@ -18,15 +18,10 @@ import { useRangeStore } from './stores/rangeStore'
 /**
  * Fonction extraite du composant pour éviter les problèmes de closure dans useEffect.
  * Appelée à chaque changement d'état auth (connexion, reconnexion, rechargement).
- *
- * @param {object} authSession - Session Supabase Auth
- * @param {object} handlers - Setters React du composant App
  */
 async function handleAuthSession(authSession, { setAuthUser, setMembership, setPlayer, setSession, setLoading }) {
-  // Stocke l'utilisateur connecté
   setAuthUser(authSession.user)
 
-  // Récupère le membership du groupe (rôle, pseudo, groupe)
   const { data: memberData } = await supabase
     .from('memberships')
     .select('*, groups(*)')
@@ -35,7 +30,6 @@ async function handleAuthSession(authSession, { setAuthUser, setMembership, setP
 
   setMembership(memberData ?? null)
 
-  // Tente de reconnecter à une session live sauvegardée dans le localStorage
   const saved = localStorage.getItem('poker_session')
   if (saved) {
     const { playerId, sessionId } = JSON.parse(saved)
@@ -46,7 +40,6 @@ async function handleAuthSession(authSession, { setAuthUser, setMembership, setP
       .eq('id', playerId)
       .single()
 
-    // Vérifie que le joueur appartient bien à la session sauvegardée
     if (playerData && playerData.session_id === sessionId) {
       const { data: sessionData } = await supabase
         .from('sessions')
@@ -55,7 +48,6 @@ async function handleAuthSession(authSession, { setAuthUser, setMembership, setP
         .single()
 
       if (sessionData) {
-        // Restaure la session et la range dans le store
         setPlayer(playerData)
         setSession(sessionData)
 
@@ -68,11 +60,9 @@ async function handleAuthSession(authSession, { setAuthUser, setMembership, setP
         if (playerData.context?.stackSize) setStackSizeSilent(playerData.context.stackSize)
         setVersusSilent(versus)
       } else {
-        // Session introuvable en base → on vide le localStorage
         localStorage.removeItem('poker_session')
       }
     } else {
-      // Joueur invalide ou session différente → on vide le localStorage
       localStorage.removeItem('poker_session')
     }
   }
@@ -81,29 +71,40 @@ async function handleAuthSession(authSession, { setAuthUser, setMembership, setP
 }
 
 export default function App() {
-  const [authUser, setAuthUser] = useState(null)       // Utilisateur Supabase Auth
-  const [membership, setMembership] = useState(null)   // Membership du groupe
-  const [session, setSession] = useState(null)         // Session live active
-  const [player, setPlayer] = useState(null)           // Joueur courant dans la session
-  const [loading, setLoading] = useState(true)         // Chargement initial
-  const reset = useRangeStore((state) => state.reset)  // Reset du store Zustand
+  const [authUser, setAuthUser] = useState(null)
+  const [membership, setMembership] = useState(null)
+  const [session, setSession] = useState(null)
+  const [player, setPlayer] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const reset = useRangeStore((state) => state.reset)
 
   useEffect(() => {
     const handlers = { setAuthUser, setMembership, setPlayer, setSession, setLoading }
 
-    // Vérifie s'il y a déjà une session auth active au démarrage
+    // Timeout de sécurité — si getSession ne répond pas en 8 secondes on affiche la page de connexion
+    const timeout = setTimeout(() => {
+      setLoading((prev) => {
+        if (prev) {
+          console.warn('getSession timeout')
+          return false
+        }
+        return prev
+      })
+    }, 8000)
+
     supabase.auth.getSession().then(async ({ data: { session: authSession }, error }) => {
+      clearTimeout(timeout)
       if (error || !authSession) {
         setLoading(false)
         return
       }
       await handleAuthSession(authSession, handlers)
     }).catch(e => {
+      clearTimeout(timeout)
       console.error('getSession catch:', e)
       setLoading(false)
     })
 
-    // Écoute les changements d'état auth (login, logout, token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
       if (!authSession) {
         setAuthUser(null)
@@ -114,13 +115,12 @@ export default function App() {
       await handleAuthSession(authSession, handlers)
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      subscription.unsubscribe()
+      clearTimeout(timeout)
+    }
   }, [])
 
-  /**
-   * Appelé quand le joueur rejoint ou crée une session live.
-   * Sauvegarde les ids dans le localStorage pour la reconnexion automatique.
-   */
   const handleJoined = ({ session, player }) => {
     localStorage.setItem('poker_session', JSON.stringify({
       playerId: player.id,
@@ -133,10 +133,6 @@ export default function App() {
     setPlayer(player)
   }
 
-  /**
-   * Appelé quand le joueur quitte la session live.
-   * Vide le localStorage et reset le store.
-   */
   const handleLeave = () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -144,10 +140,6 @@ export default function App() {
     setPlayer(null)
   }
 
-  /**
-   * Appelé quand l'utilisateur se déconnecte complètement.
-   * Vide tout et déconnecte Supabase Auth.
-   */
   const handleLogout = async () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -162,7 +154,6 @@ export default function App() {
     setMembership(memberData)
   }
 
-  // Écran de chargement initial
   if (loading) {
     return (
       <div style={{
@@ -179,7 +170,6 @@ export default function App() {
     )
   }
 
-  // Routing selon l'état de l'application
   if (!authUser) return <LoginPage />
   if (!membership) return <GroupPage user={authUser} onGroupJoined={handleGroupJoined} />
   if (!session) return <LobbyPage membership={membership} onJoined={handleJoined} onLogout={handleLogout} />
