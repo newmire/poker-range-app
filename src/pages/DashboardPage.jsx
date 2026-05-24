@@ -5,6 +5,7 @@ import { useRangeStore } from '../stores/rangeStore'
 import { generateMatrix } from '../components/RangeGrid/rangeMatrix'
 import { supabase } from '../lib/supabase'
 import LibraryPage from './LibraryPage'
+import MembersPage from './MembersPage'
 import {
   getPlayers,
   setActivePlayer,
@@ -13,11 +14,22 @@ import {
   saveRange,
   saveContext,
   saveRangeToLibrary,
+  updateLastSeen,
+  getMembers,
 } from '../lib/session'
 
 const POSITIONS = ['UTG', 'UTG+1', 'UTG+2', 'MP', 'HJ', 'CO', 'BTN', 'SB', 'BB']
 
 const isMaster = (session, player) => session?.master_id === player?.id
+
+function getStatus(lastSeen) {
+  if (!lastSeen) return { color: '#444' }
+  const normalized = lastSeen.endsWith('Z') ? lastSeen : lastSeen + 'Z'
+  const diff = Date.now() - new Date(normalized).getTime()
+  if (diff < 60000) return { color: '#22c55e' }
+  if (diff < 300000) return { color: '#f59e0b' }
+  return { color: '#444' }
+}
 
 export default function DashboardPage({ session, player, membership, authUser, onLeave, onLogout }) {
   const clearMatrix = useRangeStore((state) => state.clearMatrix)
@@ -35,16 +47,37 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [players, setPlayers] = useState([])
+  const [members, setMembers] = useState([])
   const [highlightedPlayerId, setHighlightedPlayerId] = useState(player?.id ?? null)
   const [highlightedPlayer, setHighlightedPlayer] = useState(null)
   const [activeGrid, setActiveGrid] = useState('reg')
   const [showSaveModal, setShowSaveModal] = useState(false)
   const [showLibrary, setShowLibrary] = useState(false)
+  const [showMembers, setShowMembers] = useState(false)
   const [saveName, setSaveName] = useState('')
   const [saveShared, setSaveShared] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const master = isMaster(session, player)
+
+  // Heartbeat
+  useEffect(() => {
+    if (!membership?.id) return
+    console.log('heartbeat membership.id:', membership.id)
+    updateLastSeen(membership.id)
+    const interval = setInterval(() => updateLastSeen(membership.id), 30000)
+    return () => clearInterval(interval)
+  }, [membership])
+
+  // Charge les membres pour les statuts
+  useEffect(() => {
+    if (!membership?.group_id || !master) return
+    getMembers(membership.group_id).then(setMembers)
+    const interval = setInterval(() => {
+      getMembers(membership.group_id).then(setMembers)
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [membership, master])
 
   useEffect(() => {
     if (player?.id) setPlayerId(player.id)
@@ -102,6 +135,11 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
+  const getMemberStatus = (playerName) => {
+    const member = members.find((m) => m.username === playerName)
+    return member ? getStatus(member.last_seen) : { color: '#444' }
+  }
+
   const handleSelectPlayer = async (p) => {
     setActivePlayerIdInStore(p.id)
     setHighlightedPlayerId(p.id)
@@ -143,7 +181,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
   }
 
   const handleSaveToLibrary = async () => {
-    console.log('handleSaveToLibrary called', saveName)
     if (!saveName.trim()) return
     setSaving(true)
     try {
@@ -227,6 +264,9 @@ export default function DashboardPage({ session, player, membership, authUser, o
         <button style={styles.button} onClick={clearMatrix}>Clear</button>
         <button style={styles.saveBtn} onClick={() => setShowSaveModal(true)}>💾 Sauvegarder</button>
         <button style={styles.libraryBtn} onClick={() => setShowLibrary(true)}>📚 Bibliothèque</button>
+        {master && (
+          <button style={styles.membersBtn} onClick={() => setShowMembers(true)}>👥 Membres</button>
+        )}
 
         <hr style={{ width: '100%', opacity: 0.15, margin: '4px 0' }} />
 
@@ -280,19 +320,25 @@ export default function DashboardPage({ session, player, membership, authUser, o
           <div style={styles.playerList}>
             <hr style={{ width: '100%', opacity: 0.15, margin: '4px 0' }} />
             <p style={styles.playerListTitle}>Voir la range de</p>
-            {sortedPlayers.map((p) => (
-              <button
-                key={p.id}
-                style={{
-                  ...styles.playerBtn,
-                  borderColor: highlightedPlayerId === p.id ? '#22c55e' : '#333',
-                  color: highlightedPlayerId === p.id ? '#22c55e' : '#ccc',
-                }}
-                onClick={() => handleSelectPlayer(p)}
-              >
-                {p.id === player.id ? `${p.name} (moi)` : p.name}
-              </button>
-            ))}
+            {sortedPlayers.map((p) => {
+              const status = getMemberStatus(p.name)
+              return (
+                <button
+                  key={p.id}
+                  style={{
+                    ...styles.playerBtn,
+                    borderColor: highlightedPlayerId === p.id ? '#22c55e' : '#333',
+                    color: highlightedPlayerId === p.id ? '#22c55e' : '#ccc',
+                  }}
+                  onClick={() => handleSelectPlayer(p)}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: status.color, flexShrink: 0 }} />
+                    {p.id === player.id ? `${p.name} (moi)` : p.name}
+                  </span>
+                </button>
+              )
+            })}
             {sortedPlayers.length === 0 && (
               <p style={styles.noPlayers}>En attente de joueurs...</p>
             )}
@@ -348,32 +394,32 @@ export default function DashboardPage({ session, player, membership, authUser, o
               onChange={(e) => setSaveName(e.target.value)}
               autoFocus
             />
-           <div style={styles.toggleRow}>
-  <button
-    style={{
-      ...styles.toggleBtn,
-      backgroundColor: !saveShared ? '#22c55e' : '#1a1a1a',
-      color: !saveShared ? 'white' : '#666',
-      border: !saveShared ? 'none' : '1px solid #333',
-    }}
-    onClick={() => setSaveShared(false)}
-  >
-    Personnelle
-  </button>
-  {membership.role === 'master' && (
-    <button
-      style={{
-        ...styles.toggleBtn,
-        backgroundColor: saveShared ? '#3b82f6' : '#1a1a1a',
-        color: saveShared ? 'white' : '#666',
-        border: saveShared ? 'none' : '1px solid #333',
-      }}
-      onClick={() => setSaveShared(true)}
-    >
-      Partagée
-    </button>
-  )}
-</div>
+            <div style={styles.toggleRow}>
+              <button
+                style={{
+                  ...styles.toggleBtn,
+                  backgroundColor: !saveShared ? '#22c55e' : '#1a1a1a',
+                  color: !saveShared ? 'white' : '#666',
+                  border: !saveShared ? 'none' : '1px solid #333',
+                }}
+                onClick={() => setSaveShared(false)}
+              >
+                Personnelle
+              </button>
+              {membership.role === 'master' && (
+                <button
+                  style={{
+                    ...styles.toggleBtn,
+                    backgroundColor: saveShared ? '#3b82f6' : '#1a1a1a',
+                    color: saveShared ? 'white' : '#666',
+                    border: saveShared ? 'none' : '1px solid #333',
+                  }}
+                  onClick={() => setSaveShared(true)}
+                >
+                  Partagée
+                </button>
+              )}
+            </div>
             <button style={styles.btnPrimary} onClick={handleSaveToLibrary} disabled={saving}>
               {saving ? 'Sauvegarde...' : 'Sauvegarder'}
             </button>
@@ -391,6 +437,13 @@ export default function DashboardPage({ session, player, membership, authUser, o
           onUseRange={handleUseRange}
         />
       )}
+
+      {showMembers && (
+        <MembersPage
+          membership={membership}
+          onClose={() => setShowMembers(false)}
+        />
+      )}
     </div>
   )
 }
@@ -403,6 +456,7 @@ const styles = {
   button: { padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: '#222', color: 'white', cursor: 'pointer', fontSize: '12px', flex: '1 1 auto' },
   saveBtn: { padding: '10px', borderRadius: '8px', border: '1px solid #3b82f6', backgroundColor: 'transparent', color: '#3b82f6', cursor: 'pointer', fontSize: '12px', flex: '1 1 auto' },
   libraryBtn: { padding: '10px', borderRadius: '8px', border: '1px solid #8b5cf6', backgroundColor: 'transparent', color: '#8b5cf6', cursor: 'pointer', fontSize: '12px', flex: '1 1 auto' },
+  membersBtn: { padding: '10px', borderRadius: '8px', border: '1px solid #f59e0b', backgroundColor: 'transparent', color: '#f59e0b', cursor: 'pointer', fontSize: '12px', flex: '1 1 auto' },
   leaveBtnSmall: { background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '16px', padding: '2px 6px', lineHeight: 1 },
   label: { color: '#666', fontSize: '11px', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' },
   select: { padding: '10px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1a1a1a', color: 'white', fontSize: '13px', width: '100%', cursor: 'pointer', outline: 'none' },

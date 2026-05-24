@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { createSession, joinSession, getActiveSession, subscribeToGroupSessions } from '../lib/session'
+import { createSession, joinSession, getActiveSession, subscribeToGroupSessions, updateLastSeen } from '../lib/session'
 import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
 
@@ -15,6 +15,14 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
   const username = membership.username
   const groupId = membership.group_id
   const isMaster = membership.role === 'master'
+
+  // Heartbeat
+  useEffect(() => {
+    if (!membership?.id) return
+    updateLastSeen(membership.id)
+    const interval = setInterval(() => updateLastSeen(membership.id), 30000)
+    return () => clearInterval(interval)
+  }, [membership])
 
   useEffect(() => {
     if (!groupId) return

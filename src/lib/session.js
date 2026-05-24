@@ -197,3 +197,10 @@ export async function removeMember(membershipId) {
     .eq('id', membershipId)
   if (error) console.error('❌ erreur removeMember', error)
 }
+export async function updateLastSeen(membershipId) {
+  const { error } = await supabase
+    .from('memberships')
+    .update({ last_seen: new Date().toISOString() })
+    .eq('id', membershipId)
+  if (error) console.error('❌ erreur updateLastSeen', error)
+}
