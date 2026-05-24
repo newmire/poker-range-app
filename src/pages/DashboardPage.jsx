@@ -1,17 +1,5 @@
 /**
  * DashboardPage.jsx — Page principale de la session live
- *
- * Affiche :
- * - La sidebar avec les contrôles (position, BB, versus, actions)
- * - La grille de range (une ou deux selon le rôle et l'écran)
- * - La barre d'actions en bas
- *
- * Fonctionnalités :
- * - Édition de la range en temps réel avec sauvegarde automatique
- * - Vue master : deux grilles côte à côte (Reg + Fish), liste des joueurs avec statut
- * - Sauvegarde dans la bibliothèque
- * - Accès à la bibliothèque et à la page membres
- * - Heartbeat toutes les 30 secondes pour le statut en ligne
  */
 
 import { useEffect, useState } from 'react'
@@ -36,27 +24,18 @@ import {
 
 const POSITIONS = ['UTG', 'UTG+1', 'UTG+2', 'MP', 'HJ', 'CO', 'BTN', 'SB', 'BB']
 
-/** Vérifie si le joueur courant est le master de la session */
-const isMaster = (session, player) => session?.master_id === player?.id
+const isMasterFn = (session, player) => session?.master_id === player?.id
 
-/**
- * Calcule le statut d'un membre selon son last_seen.
- * Ajoute 'Z' au timestamp si absent pour forcer l'interprétation UTC.
- *
- * @param {string|null} lastSeen - Timestamp ISO du dernier heartbeat
- * @returns {{ color: string }} Couleur du point de statut
- */
 function getStatus(lastSeen) {
   if (!lastSeen) return { color: '#444' }
   const normalized = lastSeen.endsWith('Z') ? lastSeen : lastSeen + 'Z'
   const diff = Date.now() - new Date(normalized).getTime()
-  if (diff < 60000) return { color: '#22c55e' }   // En ligne (< 1 min)
-  if (diff < 300000) return { color: '#f59e0b' }  // Récent (< 5 min)
-  return { color: '#444' }                         // Hors ligne
+  if (diff < 60000) return { color: '#22c55e' }
+  if (diff < 300000) return { color: '#f59e0b' }
+  return { color: '#444' }
 }
 
 export default function DashboardPage({ session, player, membership, authUser, onLeave, onLogout }) {
-  // ─── Store Zustand ────────────────────────────────────────────────────────
   const clearMatrix = useRangeStore((state) => state.clearMatrix)
   const setPlayerId = useRangeStore((state) => state.setPlayerId)
   const setActivePlayerIdInStore = useRangeStore((state) => state.setActivePlayerId)
@@ -70,13 +49,12 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const setStackSizeSilent = useRangeStore((state) => state.setStackSizeSilent)
   const setVersusSilent = useRangeStore((state) => state.setVersusSilent)
 
-  // ─── État local ───────────────────────────────────────────────────────────
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
-  const [players, setPlayers] = useState([])           // Joueurs de la session
-  const [members, setMembers] = useState([])           // Membres du groupe (pour les statuts)
+  const [players, setPlayers] = useState([])
+  const [members, setMembers] = useState([])
   const [highlightedPlayerId, setHighlightedPlayerId] = useState(player?.id ?? null)
   const [highlightedPlayer, setHighlightedPlayer] = useState(null)
-  const [activeGrid, setActiveGrid] = useState('reg')  // Grille active ('reg' ou 'fish')
+  const [activeGrid, setActiveGrid] = useState('reg')
   const [showSaveModal, setShowSaveModal] = useState(false)
   const [showLibrary, setShowLibrary] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
@@ -84,10 +62,9 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const [saveShared, setSaveShared] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  const master = isMaster(session, player)
+  const master = isMasterFn(session, player)
 
-  // ─── Heartbeat ────────────────────────────────────────────────────────────
-  // Met à jour le last_seen du membre toutes les 30 secondes
+  // Heartbeat
   useEffect(() => {
     if (!membership?.id) return
     updateLastSeen(membership.id)
@@ -95,7 +72,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => clearInterval(interval)
   }, [membership])
 
-  // ─── Chargement des membres (pour les statuts) ────────────────────────────
+  // Chargement des membres pour les statuts
   useEffect(() => {
     if (!membership?.group_id || !master) return
     getMembers(membership.group_id).then(setMembers)
@@ -105,30 +82,30 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => clearInterval(interval)
   }, [membership, master])
 
-  // ─── Initialisation du joueur dans le store ───────────────────────────────
   useEffect(() => {
     if (player?.id) setPlayerId(player.id)
   }, [player])
 
-  // ─── Chargement initial des joueurs de la session ─────────────────────────
+  // Chargement initial des joueurs — initialise highlightedPlayer avec le joueur courant
   useEffect(() => {
     if (!session) return
     getPlayers(session.id).then((p) => {
       setPlayers(p)
       const current = p.find((pl) => pl.id === player.id)
-      if (current) setHighlightedPlayer(current)
+      if (current) {
+        setHighlightedPlayer(current)
+        setHighlightedPlayerId(current.id)
+        setActivePlayerIdInStore(current.id)
+      }
     })
   }, [session])
 
-  // ─── Realtime : changements des joueurs ───────────────────────────────────
-  // Quand un joueur modifie sa range, le master qui le consulte voit les changements
+  // Realtime : changements des joueurs
   useEffect(() => {
     if (!session) return
     const sub = subscribeToPlayers(session.id, (payload) => {
       getPlayers(session.id).then((updatedPlayers) => {
         setPlayers(updatedPlayers)
-
-        // Si le master consulte ce joueur, on met à jour l'affichage
         if (master && payload.new?.id === highlightedPlayerId) {
           const updated = updatedPlayers.find((p) => p.id === payload.new.id)
           if (updated) {
@@ -146,14 +123,12 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => sub.unsubscribe()
   }, [session, master, highlightedPlayerId])
 
-  // ─── Realtime : changement du joueur actif ────────────────────────────────
-  // Quand le master change le joueur affiché, les autres joueurs voient leur range
+  // Realtime : changement du joueur actif
   useEffect(() => {
     if (!session) return
     const sub = subscribeToSession(session.id, (payload) => {
       const newActiveId = payload.new.active_player_id
       setHighlightedPlayerId(newActiveId)
-
       if (!master && newActiveId) {
         const activePlayer = players.find((p) => p.id === newActiveId)
         if (activePlayer?.range_reg) setMatrix(activePlayer.range_reg)
@@ -162,27 +137,22 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => sub.unsubscribe()
   }, [session, player, players])
 
-  // ─── Responsive ───────────────────────────────────────────────────────────
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768)
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  /**
-   * Récupère le statut d'un joueur en cherchant son membership par nom.
-   * @param {string} playerName
-   */
   const getMemberStatus = (playerName) => {
     const member = members.find((m) => m.username === playerName)
     return member ? getStatus(member.last_seen) : { color: '#444' }
   }
 
-  /**
-   * Le master sélectionne un joueur pour voir et éditer sa range.
-   * Charge sa range et son contexte dans le store.
-   */
   const handleSelectPlayer = async (p) => {
+    // Sauvegarde la range courante avant de changer de joueur
+    const { matrix, activePlayerId } = useRangeStore.getState()
+    if (activePlayerId) await saveRange(activePlayerId, matrix, activeGrid)
+
     setActivePlayerIdInStore(p.id)
     setHighlightedPlayerId(p.id)
     setHighlightedPlayer(p)
@@ -201,14 +171,12 @@ export default function DashboardPage({ session, player, membership, authUser, o
     setActiveGrid(v)
   }
 
-  /**
-   * Sélectionne la grille active (reg ou fish) dans la vue double du master.
-   * Sauvegarde la grille précédente avant de charger la nouvelle.
-   */
   const handleSelectGrid = async (gridVersus) => {
     if (gridVersus === activeGrid) return
 
     const { matrix, activePlayerId } = useRangeStore.getState()
+
+    // Sauvegarde la grille courante avant de switcher
     await saveRange(activePlayerId, matrix, activeGrid)
 
     const updated = await getPlayers(session.id)
@@ -226,11 +194,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
     if (activePlayerId) saveContext(activePlayerId, { position, stackSize, versus: gridVersus })
   }
 
-  /**
-   * Sauvegarde la range courante dans la bibliothèque.
-   * Récupère l'utilisateur Auth directement depuis Supabase pour éviter
-   * les problèmes de timing avec les props.
-   */
   const handleSaveToLibrary = async () => {
     if (!saveName.trim()) return
     setSaving(true)
@@ -255,10 +218,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
     }
   }
 
-  /**
-   * Charge une range depuis la bibliothèque dans la grille active.
-   * Met à jour le contexte (position, BB, versus) en même temps.
-   */
   const handleUseRange = (range) => {
     if (range.range?.length > 0) setMatrix(range.range)
     if (range.context?.position) setPositionSilent(range.context.position)
@@ -270,14 +229,13 @@ export default function DashboardPage({ session, player, membership, authUser, o
     setShowLibrary(false)
   }
 
-  // Joueurs triés : le joueur courant en premier, puis les autres
   const sortedPlayers = [
     ...players.filter((p) => p.id === player.id),
     ...players.filter((p) => p.id !== player.id),
   ]
 
-  // Affiche deux grilles côte à côte uniquement sur desktop en mode master
-  const showBothGrids = master && !isMobile && highlightedPlayer
+  // Affiche deux grilles dès que le master est sur desktop — même sans autre joueur
+  const showBothGrids = master && !isMobile
 
   return (
     <div style={{
@@ -291,7 +249,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
       gap: '20px',
     }}>
 
-      {/* ─── Sidebar ───────────────────────────────────────────────────────── */}
       <div style={{
         width: isMobile ? '100%' : '180px',
         flexShrink: 0,
@@ -305,15 +262,11 @@ export default function DashboardPage({ session, player, membership, authUser, o
         gap: '8px',
       }}>
 
-        {/* En-tête : rôle + bouton quitter */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-          <h3 style={styles.title}>
-            {master ? '👑 Master' : '🎮 Joueur'}
-          </h3>
+          <h3 style={styles.title}>{master ? '👑 Master' : '🎮 Joueur'}</h3>
           <button style={styles.leaveBtnSmall} onClick={onLeave}>✕</button>
         </div>
 
-        {/* Code de session et pseudo */}
         {session && (
           <div style={styles.sessionInfo}>
             <span style={styles.sessionCode}>#{session.code}</span>
@@ -321,7 +274,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
           </div>
         )}
 
-        {/* Actions rapides */}
         <button style={styles.button} onClick={clearMatrix}>Clear</button>
         <button style={styles.saveBtn} onClick={() => setShowSaveModal(true)}>💾 Sauvegarder</button>
         <button style={styles.libraryBtn} onClick={() => setShowLibrary(true)}>📚 Bibliothèque</button>
@@ -331,16 +283,9 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
         <hr style={{ width: '100%', opacity: 0.15, margin: '4px 0' }} />
 
-        {/* Contexte */}
         <label style={styles.label}>Position</label>
-        <select
-          style={styles.select}
-          value={position}
-          onChange={(e) => setPosition(e.target.value)}
-        >
-          {POSITIONS.map((pos) => (
-            <option key={pos} value={pos}>{pos}</option>
-          ))}
+        <select style={styles.select} value={position} onChange={(e) => setPosition(e.target.value)}>
+          {POSITIONS.map((pos) => <option key={pos} value={pos}>{pos}</option>)}
         </select>
 
         <label style={styles.label}>Profondeur (BB)</label>
@@ -352,7 +297,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
           placeholder="ex: 100"
         />
 
-        {/* Toggle Reg / Fish */}
         <label style={styles.label}>Versus</label>
         <div style={styles.toggleRow}>
           <button
@@ -363,9 +307,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
               border: activeGrid === 'reg' ? 'none' : '1px solid #333',
             }}
             onClick={() => handleSelectGrid('reg')}
-          >
-            Reg
-          </button>
+          >Reg</button>
           <button
             style={{
               ...styles.toggleBtn,
@@ -374,12 +316,9 @@ export default function DashboardPage({ session, player, membership, authUser, o
               border: activeGrid === 'fish' ? 'none' : '1px solid #333',
             }}
             onClick={() => handleSelectGrid('fish')}
-          >
-            Fish
-          </button>
+          >Fish</button>
         </div>
 
-        {/* Liste des joueurs (master uniquement) avec point de statut */}
         {master && (
           <div style={styles.playerList}>
             <hr style={{ width: '100%', opacity: 0.15, margin: '4px 0' }} />
@@ -403,18 +342,13 @@ export default function DashboardPage({ session, player, membership, authUser, o
                 </button>
               )
             })}
-            {sortedPlayers.length === 0 && (
-              <p style={styles.noPlayers}>En attente de joueurs...</p>
-            )}
+            {sortedPlayers.length === 0 && <p style={styles.noPlayers}>En attente de joueurs...</p>}
           </div>
         )}
       </div>
 
-      {/* ─── Grille(s) ─────────────────────────────────────────────────────── */}
       {showBothGrids ? (
-        // Vue master desktop : deux grilles côte à côte
         <div style={{ display: 'flex', gap: '16px', flex: 1, alignItems: 'flex-start' }}>
-          {/* Grille Reg */}
           <div
             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
             onClick={() => handleSelectGrid('reg')}
@@ -425,10 +359,9 @@ export default function DashboardPage({ session, player, membership, authUser, o
               border: activeGrid === 'reg' ? '2px solid #22c55e' : '2px solid transparent',
               transition: '0.15s',
             }}>
-              <RangeGrid overrideMatrix={activeGrid === 'reg' ? undefined : highlightedPlayer?.range_reg} readOnly={activeGrid !== 'reg'} />
+              <RangeGrid overrideMatrix={activeGrid === 'reg' ? undefined : (highlightedPlayer?.range_reg ?? undefined)} readOnly={activeGrid !== 'reg'} />
             </div>
           </div>
-          {/* Grille Fish */}
           <div
             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
             onClick={() => handleSelectGrid('fish')}
@@ -439,19 +372,16 @@ export default function DashboardPage({ session, player, membership, authUser, o
               border: activeGrid === 'fish' ? '2px solid #f97316' : '2px solid transparent',
               transition: '0.15s',
             }}>
-              <RangeGrid overrideMatrix={activeGrid === 'fish' ? undefined : highlightedPlayer?.range_fish} readOnly={activeGrid !== 'fish'} />
+              <RangeGrid overrideMatrix={activeGrid === 'fish' ? undefined : (highlightedPlayer?.range_fish ?? undefined)} readOnly={activeGrid !== 'fish'} />
             </div>
           </div>
         </div>
       ) : (
-        // Vue normale : une seule grille
         <RangeGrid />
       )}
 
-      {/* ─── Barre d'actions ───────────────────────────────────────────────── */}
       <BottomActionBar />
 
-      {/* ─── Modal sauvegarde ──────────────────────────────────────────────── */}
       {showSaveModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
@@ -474,10 +404,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
                   border: !saveShared ? 'none' : '1px solid #333',
                 }}
                 onClick={() => setSaveShared(false)}
-              >
-                Personnelle
-              </button>
-              {/* Bouton Partagée visible uniquement pour le master */}
+              >Personnelle</button>
               {membership.role === 'master' && (
                 <button
                   style={{
@@ -487,9 +414,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
                     border: saveShared ? 'none' : '1px solid #333',
                   }}
                   onClick={() => setSaveShared(true)}
-                >
-                  Partagée
-                </button>
+                >Partagée</button>
               )}
             </div>
             <button style={styles.btnPrimary} onClick={handleSaveToLibrary} disabled={saving}>
@@ -502,7 +427,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
         </div>
       )}
 
-      {/* ─── Bibliothèque ──────────────────────────────────────────────────── */}
       {showLibrary && (
         <LibraryPage
           membership={membership}
@@ -511,7 +435,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
         />
       )}
 
-      {/* ─── Page membres ──────────────────────────────────────────────────── */}
       {showMembers && (
         <MembersPage
           membership={membership}
