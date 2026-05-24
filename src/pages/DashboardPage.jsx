@@ -3,6 +3,8 @@ import RangeGrid from '../components/RangeGrid/RangeGrid'
 import BottomActionBar from '../components/Layout/BottomActionBar'
 import { useRangeStore } from '../stores/rangeStore'
 import { generateMatrix } from '../components/RangeGrid/rangeMatrix'
+import { supabase } from '../lib/supabase'
+import LibraryPage from './LibraryPage'
 import {
   getPlayers,
   setActivePlayer,
@@ -10,13 +12,14 @@ import {
   subscribeToSession,
   saveRange,
   saveContext,
+  saveRangeToLibrary,
 } from '../lib/session'
 
 const POSITIONS = ['UTG', 'UTG+1', 'UTG+2', 'MP', 'HJ', 'CO', 'BTN', 'SB', 'BB']
 
 const isMaster = (session, player) => session?.master_id === player?.id
 
-export default function DashboardPage({ session, player, onLeave }) {
+export default function DashboardPage({ session, player, membership, authUser, onLeave, onLogout }) {
   const clearMatrix = useRangeStore((state) => state.clearMatrix)
   const setPlayerId = useRangeStore((state) => state.setPlayerId)
   const setActivePlayerIdInStore = useRangeStore((state) => state.setActivePlayerId)
@@ -35,6 +38,11 @@ export default function DashboardPage({ session, player, onLeave }) {
   const [highlightedPlayerId, setHighlightedPlayerId] = useState(player?.id ?? null)
   const [highlightedPlayer, setHighlightedPlayer] = useState(null)
   const [activeGrid, setActiveGrid] = useState('reg')
+  const [showSaveModal, setShowSaveModal] = useState(false)
+  const [showLibrary, setShowLibrary] = useState(false)
+  const [saveName, setSaveName] = useState('')
+  const [saveShared, setSaveShared] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   const master = isMaster(session, player)
 
@@ -134,6 +142,42 @@ export default function DashboardPage({ session, player, onLeave }) {
     if (activePlayerId) saveContext(activePlayerId, { position, stackSize, versus: gridVersus })
   }
 
+  const handleSaveToLibrary = async () => {
+    console.log('handleSaveToLibrary called', saveName)
+    if (!saveName.trim()) return
+    setSaving(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const { matrix } = useRangeStore.getState()
+      await saveRangeToLibrary({
+        userId: user.id,
+        groupId: membership.group_id,
+        name: saveName.trim(),
+        context: { position, stackSize, versus },
+        range: matrix,
+        isShared: saveShared,
+      })
+      setShowSaveModal(false)
+      setSaveName('')
+      setSaveShared(false)
+    } catch (e) {
+      console.error('erreur save:', e)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleUseRange = (range) => {
+    if (range.range?.length > 0) setMatrix(range.range)
+    if (range.context?.position) setPositionSilent(range.context.position)
+    if (range.context?.stackSize) setStackSizeSilent(range.context.stackSize)
+    if (range.context?.versus) {
+      setVersusSilent(range.context.versus)
+      setActiveGrid(range.context.versus)
+    }
+    setShowLibrary(false)
+  }
+
   const sortedPlayers = [
     ...players.filter((p) => p.id === player.id),
     ...players.filter((p) => p.id !== player.id),
@@ -181,6 +225,8 @@ export default function DashboardPage({ session, player, onLeave }) {
         )}
 
         <button style={styles.button} onClick={clearMatrix}>Clear</button>
+        <button style={styles.saveBtn} onClick={() => setShowSaveModal(true)}>💾 Sauvegarder</button>
+        <button style={styles.libraryBtn} onClick={() => setShowLibrary(true)}>📚 Bibliothèque</button>
 
         <hr style={{ width: '100%', opacity: 0.15, margin: '4px 0' }} />
 
@@ -288,6 +334,61 @@ export default function DashboardPage({ session, player, onLeave }) {
       )}
 
       <BottomActionBar />
+
+      {showSaveModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
+            <h3 style={styles.modalTitle}>💾 Sauvegarder la range</h3>
+            <p style={styles.modalContext}>{position} · {stackSize}BB · {versus === 'reg' ? 'Reg' : 'Fish'}</p>
+            <input
+              type="text"
+              style={styles.input}
+              placeholder="Nom de la range (ex: BTN open 100bb)"
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+              autoFocus
+            />
+            <div style={styles.toggleRow}>
+              <button
+                style={{
+                  ...styles.toggleBtn,
+                  backgroundColor: !saveShared ? '#22c55e' : '#1a1a1a',
+                  color: !saveShared ? 'white' : '#666',
+                  border: !saveShared ? 'none' : '1px solid #333',
+                }}
+                onClick={() => setSaveShared(false)}
+              >
+                Personnelle
+              </button>
+              <button
+                style={{
+                  ...styles.toggleBtn,
+                  backgroundColor: saveShared ? '#3b82f6' : '#1a1a1a',
+                  color: saveShared ? 'white' : '#666',
+                  border: saveShared ? 'none' : '1px solid #333',
+                }}
+                onClick={() => setSaveShared(true)}
+              >
+                Partagée
+              </button>
+            </div>
+            <button style={styles.btnPrimary} onClick={handleSaveToLibrary} disabled={saving}>
+              {saving ? 'Sauvegarde...' : 'Sauvegarder'}
+            </button>
+            <button style={styles.btnSecondary} onClick={() => { setShowSaveModal(false); setSaveName('') }}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showLibrary && (
+        <LibraryPage
+          membership={membership}
+          onClose={() => setShowLibrary(false)}
+          onUseRange={handleUseRange}
+        />
+      )}
     </div>
   )
 }
@@ -298,6 +399,8 @@ const styles = {
   sessionCode: { color: '#22c55e', fontSize: '13px', fontWeight: 'bold' },
   playerName: { color: '#888', fontSize: '12px' },
   button: { padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: '#222', color: 'white', cursor: 'pointer', fontSize: '12px', flex: '1 1 auto' },
+  saveBtn: { padding: '10px', borderRadius: '8px', border: '1px solid #3b82f6', backgroundColor: 'transparent', color: '#3b82f6', cursor: 'pointer', fontSize: '12px', flex: '1 1 auto' },
+  libraryBtn: { padding: '10px', borderRadius: '8px', border: '1px solid #8b5cf6', backgroundColor: 'transparent', color: '#8b5cf6', cursor: 'pointer', fontSize: '12px', flex: '1 1 auto' },
   leaveBtnSmall: { background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '16px', padding: '2px 6px', lineHeight: 1 },
   label: { color: '#666', fontSize: '11px', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' },
   select: { padding: '10px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1a1a1a', color: 'white', fontSize: '13px', width: '100%', cursor: 'pointer', outline: 'none' },
@@ -309,4 +412,10 @@ const styles = {
   playerBtn: { padding: '10px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1a1a1a', color: '#ccc', cursor: 'pointer', fontSize: '13px', textAlign: 'left', transition: '0.15s' },
   noPlayers: { color: '#444', fontSize: '12px', margin: 0, fontStyle: 'italic' },
   gridLabel: { color: '#aaa', fontSize: '13px', fontWeight: 'bold' },
+  modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 },
+  modal: { backgroundColor: '#111', border: '1px solid #222', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '320px', display: 'flex', flexDirection: 'column', gap: '12px' },
+  modalTitle: { color: 'white', fontSize: '16px', margin: 0 },
+  modalContext: { color: '#666', fontSize: '12px', margin: 0 },
+  btnPrimary: { padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#22c55e', color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', width: '100%' },
+  btnSecondary: { padding: '12px', borderRadius: '8px', border: '1px solid #333', backgroundColor: 'transparent', color: '#aaa', fontSize: '14px', cursor: 'pointer', width: '100%' },
 }

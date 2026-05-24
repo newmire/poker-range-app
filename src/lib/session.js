@@ -145,3 +145,31 @@ export function subscribeToGroupSessions(groupId, onChange) {
     }, onChange)
     .subscribe()
 }
+export async function saveRangeToLibrary({ userId, groupId, name, context, range, isShared }) {
+  const { error } = await supabase
+    .from('saved_ranges')
+    .insert({
+      user_id: userId,
+      group_id: groupId,
+      player_name: context.username ?? '',
+      name,
+      context,
+      range,
+      is_shared: isShared,
+    })
+  if (error) console.error('❌ erreur saveRangeToLibrary', error)
+}
+
+export async function getSavedRanges(userId, groupId) {
+  const { data, error } = await supabase
+    .from('saved_ranges')
+    .select()
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('getSavedRanges error:', error)
+    return []
+  }
+  return data ?? []
+}

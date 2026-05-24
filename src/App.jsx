@@ -6,6 +6,56 @@ import GroupPage from './pages/GroupPage'
 import { supabase } from './lib/supabase'
 import { useRangeStore } from './stores/rangeStore'
 
+async function handleAuthSession(authSession, { setAuthUser, setMembership, setPlayer, setSession, setLoading }) {
+  setAuthUser(authSession.user)
+
+  const { data: memberData } = await supabase
+    .from('memberships')
+    .select('*, groups(*)')
+    .eq('user_id', authSession.user.id)
+    .single()
+
+  setMembership(memberData ?? null)
+
+  const saved = localStorage.getItem('poker_session')
+  if (saved) {
+    const { playerId, sessionId } = JSON.parse(saved)
+    const { data: playerData } = await supabase
+      .from('players')
+      .select()
+      .eq('id', playerId)
+      .single()
+
+    if (playerData && playerData.session_id === sessionId) {
+      const { data: sessionData } = await supabase
+        .from('sessions')
+        .select()
+        .eq('id', sessionId)
+        .single()
+
+      if (sessionData) {
+        setPlayer(playerData)
+        setSession(sessionData)
+
+        const { setPlayerId, setMatrix, setPositionSilent, setStackSizeSilent, setVersusSilent } = useRangeStore.getState()
+        setPlayerId(playerData.id)
+        const versus = playerData.context?.versus ?? 'reg'
+        const range = versus === 'fish' ? playerData.range_fish : playerData.range_reg
+        if (range?.length > 0) setMatrix(range)
+        if (playerData.context?.position) setPositionSilent(playerData.context.position)
+        if (playerData.context?.stackSize) setStackSizeSilent(playerData.context.stackSize)
+        setVersusSilent(versus)
+      } else {
+        localStorage.removeItem('poker_session')
+      }
+    } else {
+      localStorage.removeItem('poker_session')
+    }
+  }
+
+  setLoading(false)
+}
+
 export default function App() {
   const [authUser, setAuthUser] = useState(null)
   const [membership, setMembership] = useState(null)
@@ -15,64 +65,29 @@ export default function App() {
   const reset = useRangeStore((state) => state.reset)
 
   useEffect(() => {
-    // écoute l'état auth Supabase
+    const handlers = { setAuthUser, setMembership, setPlayer, setSession, setLoading }
+
+    supabase.auth.getSession().then(async ({ data: { session: authSession }, error }) => {
+      console.log('getSession result:', authSession, 'error:', error)
+      if (error || !authSession) {
+        setLoading(false)
+        return
+      }
+      await handleAuthSession(authSession, handlers)
+    }).catch(e => {
+      console.error('getSession catch:', e)
+      setLoading(false)
+    })
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
+      console.log('onAuthStateChange fired', event, authSession)
       if (!authSession) {
         setAuthUser(null)
         setMembership(null)
         setLoading(false)
         return
       }
-
-      setAuthUser(authSession.user)
-
-      // cherche si l'utilisateur est dans un groupe
-      const { data: memberData } = await supabase
-        .from('memberships')
-        .select('*, groups(*)')
-        .eq('user_id', authSession.user.id)
-        .single()
-
-      setMembership(memberData ?? null)
-
-      // tentative de reconnexion à une session live
-      const saved = localStorage.getItem('poker_session')
-      if (saved) {
-        const { playerId, sessionId } = JSON.parse(saved)
-        const { data: playerData } = await supabase
-          .from('players')
-          .select()
-          .eq('id', playerId)
-          .single()
-
-        if (playerData && playerData.session_id === sessionId) {
-          const { data: sessionData } = await supabase
-            .from('sessions')
-            .select()
-            .eq('id', sessionId)
-            .single()
-
-          if (sessionData) {
-            setPlayer(playerData)
-            setSession(sessionData)
-
-            const { setPlayerId, setMatrix, setPositionSilent, setStackSizeSilent, setVersusSilent } = useRangeStore.getState()
-            setPlayerId(playerData.id)
-            const versus = playerData.context?.versus ?? 'reg'
-            const range = versus === 'fish' ? playerData.range_fish : playerData.range_reg
-            if (range?.length > 0) setMatrix(range)
-            if (playerData.context?.position) setPositionSilent(playerData.context.position)
-            if (playerData.context?.stackSize) setStackSizeSilent(playerData.context.stackSize)
-            setVersusSilent(versus)
-          } else {
-            localStorage.removeItem('poker_session')
-          }
-        } else {
-          localStorage.removeItem('poker_session')
-        }
-      }
-
-      setLoading(false)
+      await handleAuthSession(authSession, handlers)
     })
 
     return () => subscription.unsubscribe()
@@ -127,15 +142,9 @@ export default function App() {
     )
   }
 
-  // pas connecté → login
   if (!authUser) return <LoginPage />
-
-  // connecté mais pas dans un groupe → GroupPage
   if (!membership) return <GroupPage user={authUser} onGroupJoined={handleGroupJoined} />
-
-  // dans un groupe mais pas dans une session live → LobbyPage
   if (!session) return <LobbyPage membership={membership} onJoined={handleJoined} onLogout={handleLogout} />
 
-  // dans une session live → DashboardPage
-  return <DashboardPage session={session} player={player} onLeave={handleLeave} onLogout={handleLogout} />
+  return <DashboardPage session={session} player={player} membership={membership} authUser={authUser} onLeave={handleLeave} onLogout={handleLogout} />
 }
