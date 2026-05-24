@@ -348,30 +348,32 @@ export default function DashboardPage({ session, player, membership, authUser, o
               onChange={(e) => setSaveName(e.target.value)}
               autoFocus
             />
-            <div style={styles.toggleRow}>
-              <button
-                style={{
-                  ...styles.toggleBtn,
-                  backgroundColor: !saveShared ? '#22c55e' : '#1a1a1a',
-                  color: !saveShared ? 'white' : '#666',
-                  border: !saveShared ? 'none' : '1px solid #333',
-                }}
-                onClick={() => setSaveShared(false)}
-              >
-                Personnelle
-              </button>
-              <button
-                style={{
-                  ...styles.toggleBtn,
-                  backgroundColor: saveShared ? '#3b82f6' : '#1a1a1a',
-                  color: saveShared ? 'white' : '#666',
-                  border: saveShared ? 'none' : '1px solid #333',
-                }}
-                onClick={() => setSaveShared(true)}
-              >
-                Partagée
-              </button>
-            </div>
+           <div style={styles.toggleRow}>
+  <button
+    style={{
+      ...styles.toggleBtn,
+      backgroundColor: !saveShared ? '#22c55e' : '#1a1a1a',
+      color: !saveShared ? 'white' : '#666',
+      border: !saveShared ? 'none' : '1px solid #333',
+    }}
+    onClick={() => setSaveShared(false)}
+  >
+    Personnelle
+  </button>
+  {membership.role === 'master' && (
+    <button
+      style={{
+        ...styles.toggleBtn,
+        backgroundColor: saveShared ? '#3b82f6' : '#1a1a1a',
+        color: saveShared ? 'white' : '#666',
+        border: saveShared ? 'none' : '1px solid #333',
+      }}
+      onClick={() => setSaveShared(true)}
+    >
+      Partagée
+    </button>
+  )}
+</div>
             <button style={styles.btnPrimary} onClick={handleSaveToLibrary} disabled={saving}>
               {saving ? 'Sauvegarde...' : 'Sauvegarder'}
             </button>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getSavedRanges } from '../lib/session'
+import { getSavedRanges, deleteRange } from '../lib/session'
 import RangeGrid from '../components/RangeGrid/RangeGrid'
 
 export default function LibraryPage({ membership, onClose, onUseRange }) {
@@ -7,19 +7,29 @@ export default function LibraryPage({ membership, onClose, onUseRange }) {
   const [selected, setSelected] = useState(null)
   const [filterPosition, setFilterPosition] = useState('')
   const [filterVersus, setFilterVersus] = useState('')
+  const [filterVisibility, setFilterVisibility] = useState('')
 
   useEffect(() => {
     if (!membership?.user_id || !membership?.group_id) return
-    console.log('fetching ranges for:', membership.user_id, membership.group_id)
-    getSavedRanges(membership.user_id, membership.group_id).then((data) => {
-      console.log('ranges:', data)
-      setRanges(data)
-    })
+    getSavedRanges(membership.user_id, membership.group_id).then(setRanges)
   }, [membership])
+
+  const handleDelete = async (r) => {
+    await deleteRange(r.id)
+    setRanges((prev) => prev.filter((x) => x.id !== r.id))
+    if (selected?.id === r.id) setSelected(null)
+  }
+
+  const canDelete = (r) => {
+    if (membership.role === 'master') return true
+    return r.user_id === membership.user_id && !r.is_shared
+  }
 
   const filtered = ranges.filter((r) => {
     if (filterPosition && r.context?.position !== filterPosition) return false
     if (filterVersus && r.context?.versus !== filterVersus) return false
+    if (filterVisibility === 'personal' && r.is_shared) return false
+    if (filterVisibility === 'shared' && !r.is_shared) return false
     return true
   })
 
@@ -51,6 +61,15 @@ export default function LibraryPage({ membership, onClose, onUseRange }) {
             <option value="reg">Reg</option>
             <option value="fish">Fish</option>
           </select>
+          <select
+            style={styles.select}
+            value={filterVisibility}
+            onChange={(e) => setFilterVisibility(e.target.value)}
+          >
+            <option value="">Toutes</option>
+            <option value="personal">🔒 Personnelles</option>
+            <option value="shared">👥 Partagées</option>
+          </select>
         </div>
 
         <div style={styles.body}>
@@ -59,21 +78,30 @@ export default function LibraryPage({ membership, onClose, onUseRange }) {
               <p style={styles.empty}>Aucune range sauvegardée.</p>
             )}
             {filtered.map((r) => (
-              <button
-                key={r.id}
-                style={{
-                  ...styles.rangeBtn,
-                  borderColor: selected?.id === r.id ? '#22c55e' : '#333',
-                  color: selected?.id === r.id ? '#22c55e' : '#ccc',
-                }}
-                onClick={() => setSelected(r)}
-              >
-                <span style={styles.rangeName}>{r.name}</span>
-                <span style={styles.rangeContext}>
-                  {r.context?.position} · {r.context?.stackSize}BB · {r.context?.versus === 'fish' ? 'Fish' : 'Reg'}
-                  {r.is_shared ? ' · 👥' : ' · 🔒'}
-                </span>
-              </button>
+              <div key={r.id} style={{ position: 'relative' }}>
+                <button
+                  style={{
+                    ...styles.rangeBtn,
+                    borderColor: selected?.id === r.id ? '#22c55e' : '#333',
+                    color: selected?.id === r.id ? '#22c55e' : '#ccc',
+                  }}
+                  onClick={() => setSelected(r)}
+                >
+                  <span style={styles.rangeName}>{r.name}</span>
+                  <span style={styles.rangeContext}>
+                    {r.context?.position} · {r.context?.stackSize}BB · {r.context?.versus === 'fish' ? 'Fish' : 'Reg'}
+                    {r.is_shared ? ' · 👥' : ' · 🔒'}
+                  </span>
+                </button>
+                {canDelete(r) && (
+                  <button
+                    style={styles.deleteBtn}
+                    onClick={(e) => { e.stopPropagation(); handleDelete(r) }}
+                  >
+                    🗑️
+                  </button>
+                )}
+              </div>
             ))}
           </div>
 
@@ -81,12 +109,19 @@ export default function LibraryPage({ membership, onClose, onUseRange }) {
             {selected ? (
               <>
                 <p style={styles.previewTitle}>{selected.name}</p>
-                <RangeGrid overrideMatrix={selected.range} readOnly />
-                {onUseRange && (
-                  <button style={styles.useBtn} onClick={() => onUseRange(selected)}>
-                    Utiliser cette range
-                  </button>
-                )}
+                <RangeGrid overrideMatrix={selected.range} readOnly compact />
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  {onUseRange && (
+                    <button style={styles.useBtn} onClick={() => onUseRange(selected)}>
+                      Utiliser cette range
+                    </button>
+                  )}
+                  {canDelete(selected) && (
+                    <button style={styles.deleteBtnLarge} onClick={() => handleDelete(selected)}>
+                      🗑️ Supprimer
+                    </button>
+                  )}
+                </div>
               </>
             ) : (
               <p style={styles.empty}>Sélectionne une range pour la visualiser.</p>
@@ -108,11 +143,13 @@ const styles = {
   select: { padding: '8px 12px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1a1a1a', color: 'white', fontSize: '13px', cursor: 'pointer', outline: 'none' },
   body: { display: 'flex', flex: 1, overflow: 'hidden' },
   list: { width: '240px', flexShrink: 0, borderRight: '1px solid #222', padding: '12px', display: 'flex', flexDirection: 'column', gap: '6px', overflowY: 'auto' },
-  rangeBtn: { padding: '10px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1a1a1a', cursor: 'pointer', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '2px' },
+  rangeBtn: { padding: '10px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1a1a1a', cursor: 'pointer', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '2px', width: '100%' },
   rangeName: { color: 'white', fontSize: '13px', fontWeight: 'bold' },
   rangeContext: { color: '#666', fontSize: '11px' },
+  deleteBtn: { position: 'absolute', top: '6px', right: '6px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '14px', opacity: 0.5 },
   preview: { flex: 1, padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', overflowY: 'auto' },
   previewTitle: { color: 'white', fontSize: '16px', fontWeight: 'bold', margin: 0 },
   useBtn: { padding: '12px 24px', borderRadius: '8px', border: 'none', backgroundColor: '#22c55e', color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' },
+  deleteBtnLarge: { padding: '12px 24px', borderRadius: '8px', border: '1px solid #ef4444', backgroundColor: 'transparent', color: '#ef4444', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' },
   empty: { color: '#444', fontSize: '13px', fontStyle: 'italic', margin: 0 },
 }

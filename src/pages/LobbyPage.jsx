@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { createSession, joinSession, getActiveSession, subscribeToGroupSessions, getSavedRanges } from '../lib/session'
-import { useRangeStore } from '../stores/rangeStore'
+import { createSession, joinSession, getActiveSession, subscribeToGroupSessions } from '../lib/session'
 import LibraryPage from './LibraryPage'
+import MembersPage from './MembersPage'
 
 export default function LobbyPage({ membership, onJoined, onLogout }) {
   const [mode, setMode] = useState(null)
@@ -9,18 +9,12 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [activeSession, setActiveSession] = useState(null)
-  const [savedRanges, setSavedRanges] = useState([])
-  const [selectedRange, setSelectedRange] = useState(null)
   const [showLibrary, setShowLibrary] = useState(false)
+  const [showMembers, setShowMembers] = useState(false)
 
   const username = membership.username
   const groupId = membership.group_id
   const isMaster = membership.role === 'master'
-
-  const setMatrix = useRangeStore((state) => state.setMatrix)
-  const setPositionSilent = useRangeStore((state) => state.setPositionSilent)
-  const setStackSizeSilent = useRangeStore((state) => state.setStackSizeSilent)
-  const setVersusSilent = useRangeStore((state) => state.setVersusSilent)
 
   useEffect(() => {
     if (!groupId) return
@@ -30,19 +24,6 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
     })
     return () => sub.unsubscribe()
   }, [groupId])
-
-  useEffect(() => {
-    if (!membership.user_id || !groupId) return
-    getSavedRanges(membership.user_id, groupId).then(setSavedRanges)
-  }, [membership])
-
-  const handleSelectRange = (range) => {
-    setSelectedRange(range)
-    if (range.range?.length > 0) setMatrix(range.range)
-    if (range.context?.position) setPositionSilent(range.context.position)
-    if (range.context?.stackSize) setStackSizeSilent(range.context.stackSize)
-    if (range.context?.versus) setVersusSilent(range.context.versus)
-  }
 
   const handleCreate = async () => {
     setLoading(true)
@@ -85,38 +66,6 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
           <div style={styles.activeSessionBox}>
             <p style={styles.activeSessionLabel}>Session en cours</p>
             <span style={styles.activeSessionCode}>#{activeSession.code}</span>
-
-            {savedRanges.length > 0 && (
-              <div style={styles.rangeList}>
-                <p style={styles.rangeListLabel}>Charger une range</p>
-                {savedRanges.map((r) => (
-                  <button
-                    key={r.id}
-                    style={{
-                      ...styles.rangeBtn,
-                      borderColor: selectedRange?.id === r.id ? '#22c55e' : '#333',
-                      color: selectedRange?.id === r.id ? '#22c55e' : '#ccc',
-                    }}
-                    onClick={() => handleSelectRange(r)}
-                  >
-                    <span style={styles.rangeName}>{r.name}</span>
-                    <span style={styles.rangeContext}>
-                      {r.context?.position} · {r.context?.stackSize}BB · {r.context?.versus === 'fish' ? 'Fish' : 'Reg'}
-                      {r.is_shared && ' · 👥'}
-                    </span>
-                  </button>
-                ))}
-                {selectedRange && (
-                  <button style={styles.clearBtn} onClick={() => {
-                    setSelectedRange(null)
-                    useRangeStore.getState().reset()
-                  }}>
-                    ✕ Vider la range
-                  </button>
-                )}
-              </div>
-            )}
-
             <button
               style={styles.btnPrimary}
               onClick={() => handleJoin(activeSession.code)}
@@ -142,6 +91,11 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
             <button style={styles.btnLibrary} onClick={() => setShowLibrary(true)}>
               📚 Bibliothèque
             </button>
+            {isMaster && (
+              <button style={styles.btnMembers} onClick={() => setShowMembers(true)}>
+                👥 Membres
+              </button>
+            )}
           </div>
         )}
 
@@ -185,6 +139,13 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
           onUseRange={null}
         />
       )}
+
+      {showMembers && (
+        <MembersPage
+          membership={membership}
+          onClose={() => setShowMembers(false)}
+        />
+      )}
     </div>
   )
 }
@@ -203,15 +164,10 @@ const styles = {
   btnPrimary: { padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#22c55e', color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', width: '100%' },
   btnSecondary: { padding: '12px', borderRadius: '8px', border: '1px solid #333', backgroundColor: 'transparent', color: '#aaa', fontSize: '14px', cursor: 'pointer', width: '100%' },
   btnLibrary: { padding: '12px', borderRadius: '8px', border: '1px solid #8b5cf6', backgroundColor: 'transparent', color: '#8b5cf6', fontSize: '14px', cursor: 'pointer', width: '100%' },
+  btnMembers: { padding: '12px', borderRadius: '8px', border: '1px solid #f59e0b', backgroundColor: 'transparent', color: '#f59e0b', fontSize: '14px', cursor: 'pointer', width: '100%' },
   activeSessionBox: { width: '100%', backgroundColor: '#1a1a1a', borderRadius: '8px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', border: '1px solid #22c55e' },
   activeSessionLabel: { color: '#666', fontSize: '11px', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' },
   activeSessionCode: { color: '#22c55e', fontSize: '20px', fontWeight: 'bold', letterSpacing: '0.1em' },
-  rangeList: { display: 'flex', flexDirection: 'column', gap: '6px', width: '100%' },
-  rangeListLabel: { color: '#666', fontSize: '11px', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' },
-  rangeBtn: { padding: '8px 10px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#111', color: '#ccc', cursor: 'pointer', fontSize: '12px', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '2px', width: '100%' },
-  rangeName: { fontWeight: 'bold' },
-  rangeContext: { color: '#666', fontSize: '11px' },
-  clearBtn: { padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'transparent', color: '#666', cursor: 'pointer', fontSize: '11px', width: '100%' },
   inviteBox: { width: '100%', backgroundColor: '#1a1a1a', borderRadius: '8px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' },
   inviteLabel: { color: '#666', fontSize: '11px', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' },
   inviteCode: { color: '#f59e0b', fontSize: '20px', fontWeight: 'bold', letterSpacing: '0.1em' },

@@ -164,7 +164,7 @@ export async function getSavedRanges(userId, groupId) {
   const { data, error } = await supabase
     .from('saved_ranges')
     .select()
-    .eq('user_id', userId)
+    .or(`user_id.eq.${userId},and(group_id.eq.${groupId},is_shared.eq.true)`)
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -172,4 +172,28 @@ export async function getSavedRanges(userId, groupId) {
     return []
   }
   return data ?? []
+}
+export async function deleteRange(rangeId) {
+  const { error } = await supabase
+    .from('saved_ranges')
+    .delete()
+    .eq('id', rangeId)
+  if (error) console.error('❌ erreur deleteRange', error)
+}
+export async function getMembers(groupId) {
+  const { data, error } = await supabase
+    .from('memberships')
+    .select()
+    .eq('group_id', groupId)
+    .order('created_at')
+  if (error) return []
+  return data ?? []
+}
+
+export async function removeMember(membershipId) {
+  const { error } = await supabase
+    .from('memberships')
+    .delete()
+    .eq('id', membershipId)
+  if (error) console.error('❌ erreur removeMember', error)
 }
