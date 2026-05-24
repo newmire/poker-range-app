@@ -84,6 +84,7 @@ export default function App() {
     const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
+      console.log('onAuthStateChange:', event, !!authSession)
       if (!authSession) {
         setAuthUser(null)
         setMemberships([])
