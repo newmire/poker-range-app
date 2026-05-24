@@ -1,11 +1,5 @@
 /**
  * App.jsx — Point d'entrée principal de l'application
- *
- * Gère :
- * - L'authentification Supabase (connexion persistante)
- * - La reconnexion automatique à une session live via localStorage
- * - Le routing entre les pages (Login → GroupSelect → Group → Lobby → Dashboard)
- * - La gestion multi-groupes (un utilisateur peut appartenir à plusieurs groupes)
  */
 
 import { useState, useEffect } from 'react'
@@ -84,30 +78,10 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [player, setPlayer] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [loadingTooLong, setLoadingTooLong] = useState(false)
   const reset = useRangeStore((state) => state.reset)
 
   useEffect(() => {
     const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }
-
-    // Après 15 secondes, affiche le bouton "Réessayer"
-    const slowTimeout = setTimeout(() => {
-      setLoadingTooLong(true)
-    }, 15000)
-
-    supabase.auth.getSession().then(async ({ data: { session: authSession }, error }) => {
-      clearTimeout(slowTimeout)
-      setLoadingTooLong(false)
-      if (error || !authSession) {
-        setLoading(false)
-        return
-      }
-      await handleAuthSession(authSession, handlers)
-    }).catch(e => {
-      clearTimeout(slowTimeout)
-      console.error('getSession catch:', e)
-      setLoading(false)
-    })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
       if (!authSession) {
@@ -120,10 +94,7 @@ export default function App() {
       await handleAuthSession(authSession, handlers)
     })
 
-    return () => {
-      subscription.unsubscribe()
-      clearTimeout(slowTimeout)
-    }
+    return () => subscription.unsubscribe()
   }, [])
 
   const handleJoined = ({ session, player }) => {
@@ -180,32 +151,10 @@ export default function App() {
         minHeight: '100vh',
         backgroundColor: '#0a0a0a',
         display: 'flex',
-        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: '16px',
       }}>
         <p style={{ color: '#666', fontSize: '14px', margin: 0 }}>Chargement...</p>
-        {loadingTooLong && (
-          <>
-            <p style={{ color: '#444', fontSize: '12px', margin: 0 }}>La connexion prend du temps...</p>
-            <button
-              onClick={() => window.location.reload()}
-              style={{
-                padding: '10px 24px',
-                borderRadius: '8px',
-                border: 'none',
-                backgroundColor: '#22c55e',
-                color: 'white',
-                fontWeight: 'bold',
-                fontSize: '14px',
-                cursor: 'pointer',
-              }}
-            >
-              Réessayer
-            </button>
-          </>
-        )}
       </div>
     )
   }
