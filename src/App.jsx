@@ -82,9 +82,11 @@ export default function App() {
 
   useEffect(() => {
     const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }
+    let handled = false
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
       console.log('onAuthStateChange:', event, !!authSession)
+      handled = true
       if (!authSession) {
         setAuthUser(null)
         setMemberships([])
@@ -95,7 +97,27 @@ export default function App() {
       await handleAuthSession(authSession, handlers)
     })
 
-    return () => subscription.unsubscribe()
+    // Fallback : si onAuthStateChange ne se déclenche pas dans les 3s, on appelle getSession manuellement
+    const fallbackTimeout = setTimeout(async () => {
+      if (handled) return
+      console.log('fallback getSession')
+      try {
+        const { data: { session: authSession } } = await supabase.auth.getSession()
+        if (!authSession) {
+          setLoading(false)
+          return
+        }
+        await handleAuthSession(authSession, handlers)
+      } catch (e) {
+        console.error('fallback error:', e)
+        setLoading(false)
+      }
+    }, 3000)
+
+    return () => {
+      subscription.unsubscribe()
+      clearTimeout(fallbackTimeout)
+    }
   }, [])
 
   const handleJoined = ({ session, player }) => {
