@@ -1,15 +1,30 @@
+/**
+ * LoginPage.jsx — Page de connexion et d'inscription
+ *
+ * Gère deux modes :
+ * - 'login' : connexion avec email + mot de passe
+ * - 'register' : inscription avec email + mot de passe + pseudo
+ *
+ * Utilise Supabase Auth pour l'authentification.
+ * Après inscription, un email de confirmation est envoyé.
+ */
+
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 export default function LoginPage() {
-  const [mode, setMode] = useState('login') // 'login' | 'register'
+  const [mode, setMode] = useState('login')      // 'login' | 'register'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [username, setUsername] = useState('')
+  const [username, setUsername] = useState('')   // Pseudo (inscription uniquement)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [message, setMessage] = useState(null)
+  const [message, setMessage] = useState(null)   // Message de succès
 
+  /**
+   * Connecte l'utilisateur avec email + mot de passe.
+   * Supabase Auth déclenche onAuthStateChange dans App.jsx.
+   */
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) return setError('Remplissez tous les champs')
     setLoading(true)
@@ -24,6 +39,11 @@ export default function LoginPage() {
     }
   }
 
+  /**
+   * Inscrit un nouvel utilisateur.
+   * Le pseudo est stocké dans les métadonnées Supabase Auth (app_metadata).
+   * Un email de confirmation est envoyé avant que le compte soit actif.
+   */
   const handleRegister = async () => {
     if (!email.trim() || !password.trim() || !username.trim()) return setError('Remplissez tous les champs')
     setLoading(true)
@@ -49,21 +69,33 @@ export default function LoginPage() {
         <h1 style={styles.title}>🃏 Poker Range</h1>
         <p style={styles.subtitle}>Outil de review collaborative</p>
 
+        {/* Toggle Connexion / Inscription */}
         <div style={styles.toggleRow}>
           <button
-            style={{ ...styles.toggleBtn, backgroundColor: mode === 'login' ? '#22c55e' : '#1a1a1a', color: mode === 'login' ? 'white' : '#666', border: mode === 'login' ? 'none' : '1px solid #333' }}
+            style={{
+              ...styles.toggleBtn,
+              backgroundColor: mode === 'login' ? '#22c55e' : '#1a1a1a',
+              color: mode === 'login' ? 'white' : '#666',
+              border: mode === 'login' ? 'none' : '1px solid #333',
+            }}
             onClick={() => { setMode('login'); setError(null); setMessage(null) }}
           >
             Connexion
           </button>
           <button
-            style={{ ...styles.toggleBtn, backgroundColor: mode === 'register' ? '#22c55e' : '#1a1a1a', color: mode === 'register' ? 'white' : '#666', border: mode === 'register' ? 'none' : '1px solid #333' }}
+            style={{
+              ...styles.toggleBtn,
+              backgroundColor: mode === 'register' ? '#22c55e' : '#1a1a1a',
+              color: mode === 'register' ? 'white' : '#666',
+              border: mode === 'register' ? 'none' : '1px solid #333',
+            }}
             onClick={() => { setMode('register'); setError(null); setMessage(null) }}
           >
             Inscription
           </button>
         </div>
 
+        {/* Champ pseudo (inscription uniquement) */}
         {mode === 'register' && (
           <input
             style={styles.input}

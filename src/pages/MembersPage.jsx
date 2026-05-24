@@ -1,6 +1,34 @@
+/**
+ * MembersPage.jsx — Page de gestion des membres du groupe
+ *
+ * Accessible uniquement par le master depuis le lobby et le dashboard.
+ *
+ * Affiche :
+ * - La liste de tous les membres du groupe
+ * - Le statut en ligne de chaque membre (point coloré)
+ * - Le rôle de chaque membre (Master / Joueur)
+ *
+ * Fonctionnalités :
+ * - Retrait d'un membre (master uniquement, ne peut pas se retirer lui-même)
+ * - Rafraîchissement automatique du statut toutes les 30 secondes
+ *
+ * Statut en ligne :
+ * - 🟢 Vert : vu il y a moins d'1 minute (en ligne)
+ * - 🟡 Jaune : vu il y a moins de 5 minutes (récemment actif)
+ * - ⚫ Gris : vu il y a plus de 5 minutes (hors ligne)
+ */
+
 import { useEffect, useState } from 'react'
 import { getMembers, removeMember } from '../lib/session'
 
+/**
+ * Calcule le statut d'un membre selon son last_seen.
+ * Ajoute 'Z' au timestamp si absent pour forcer l'interprétation UTC
+ * et éviter les problèmes de fuseau horaire.
+ *
+ * @param {string|null} lastSeen - Timestamp ISO du dernier heartbeat
+ * @returns {{ color: string, label: string }}
+ */
 function getStatus(lastSeen) {
   if (!lastSeen) return { color: '#444', label: 'jamais vu' }
   const normalized = lastSeen.endsWith('Z') ? lastSeen : lastSeen + 'Z'
@@ -14,6 +42,10 @@ export default function MembersPage({ membership, onClose }) {
   const [members, setMembers] = useState([])
   const [loading, setLoading] = useState(true)
 
+  /**
+   * Charge la liste des membres depuis Supabase.
+   * Appelé au montage et toutes les 30 secondes pour rafraîchir les statuts.
+   */
   const loadMembers = async () => {
     if (!membership?.group_id) return
     const data = await getMembers(membership.group_id)
@@ -27,6 +59,10 @@ export default function MembersPage({ membership, onClose }) {
     return () => clearInterval(interval)
   }, [membership])
 
+  /**
+   * Retire un membre du groupe.
+   * Met à jour l'état local immédiatement sans attendre le rechargement.
+   */
   const handleRemove = async (m) => {
     await removeMember(m.id)
     setMembers((prev) => prev.filter((x) => x.id !== m.id))
@@ -50,14 +86,17 @@ export default function MembersPage({ membership, onClose }) {
             return (
               <div key={m.id} style={styles.memberRow}>
                 <div style={styles.memberInfo}>
+                  {/* Pseudo avec point de statut */}
                   <div style={styles.memberNameRow}>
                     <span style={{ ...styles.dot, backgroundColor: status.color }} />
                     <span style={styles.memberName}>{m.username}</span>
                   </div>
+                  {/* Rôle et statut textuel */}
                   <span style={styles.memberRole}>
                     {m.role === 'master' ? '👑 Master' : '🎮 Joueur'} · {status.label}
                   </span>
                 </div>
+                {/* Bouton retirer (pas pour le master) */}
                 {m.role !== 'master' && (
                   <button style={styles.removeBtn} onClick={() => handleRemove(m)}>
                     Retirer

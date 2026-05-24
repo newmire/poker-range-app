@@ -1,14 +1,35 @@
+/**
+ * LobbyPage.jsx — Page d'accueil après connexion au groupe
+ *
+ * Affiche :
+ * - Les infos du groupe et du membre connecté
+ * - La session active du groupe (détectée automatiquement via Realtime)
+ * - Les boutons pour créer/rejoindre une session (selon le rôle)
+ * - L'accès à la bibliothèque de ranges et à la gestion des membres
+ *
+ * Fonctionnalités :
+ * - Détection automatique d'une session active via Supabase Realtime
+ * - Heartbeat toutes les 30 secondes pour le statut en ligne
+ * - Accès à la bibliothèque et aux membres depuis le lobby
+ */
+
 import { useState, useEffect } from 'react'
-import { createSession, joinSession, getActiveSession, subscribeToGroupSessions, updateLastSeen } from '../lib/session'
+import {
+  createSession,
+  joinSession,
+  getActiveSession,
+  subscribeToGroupSessions,
+  updateLastSeen,
+} from '../lib/session'
 import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
 
 export default function LobbyPage({ membership, onJoined, onLogout }) {
-  const [mode, setMode] = useState(null)
-  const [code, setCode] = useState('')
+  const [mode, setMode] = useState(null)               // null | 'join'
+  const [code, setCode] = useState('')                 // Code de session saisi manuellement
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [activeSession, setActiveSession] = useState(null)
+  const [activeSession, setActiveSession] = useState(null) // Session active du groupe
   const [showLibrary, setShowLibrary] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
 
@@ -16,7 +37,7 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
   const groupId = membership.group_id
   const isMaster = membership.role === 'master'
 
-  // Heartbeat
+  // ─── Heartbeat ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!membership?.id) return
     updateLastSeen(membership.id)
@@ -24,6 +45,8 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
     return () => clearInterval(interval)
   }, [membership])
 
+  // ─── Détection automatique de la session active ───────────────────────────
+  // Charge la session active au montage puis écoute les nouvelles sessions en Realtime
   useEffect(() => {
     if (!groupId) return
     getActiveSession(groupId).then(setActiveSession)
@@ -33,6 +56,10 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
     return () => sub.unsubscribe()
   }, [groupId])
 
+  /**
+   * Crée une nouvelle session (master uniquement).
+   * Le master devient automatiquement le premier joueur.
+   */
   const handleCreate = async () => {
     setLoading(true)
     setError(null)
@@ -46,6 +73,13 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
     }
   }
 
+  /**
+   * Rejoint une session via son code.
+   * Si sessionCode est fourni, l'utilise directement (session active détectée).
+   * Sinon, utilise le code saisi manuellement.
+   *
+   * @param {string} [sessionCode] - Code de session (optionnel)
+   */
   const handleJoin = async (sessionCode) => {
     setLoading(true)
     setError(null)
@@ -64,12 +98,14 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
       <div style={styles.card}>
         <h1 style={styles.title}>🃏 Poker Range</h1>
 
+        {/* Infos du groupe et du membre */}
         <div style={styles.groupInfo}>
           <span style={styles.groupName}>👥 {membership.groups?.name}</span>
           <span style={styles.username}>{username}</span>
           {isMaster && <span style={styles.masterBadge}>👑 Master</span>}
         </div>
 
+        {/* Session active détectée automatiquement (joueurs uniquement) */}
         {activeSession && !mode && !isMaster && (
           <div style={styles.activeSessionBox}>
             <p style={styles.activeSessionLabel}>Session en cours</p>
@@ -84,13 +120,16 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
           </div>
         )}
 
+        {/* Boutons principaux */}
         {!mode && (
           <div style={styles.buttons}>
+            {/* Créer une session (master uniquement) */}
             {isMaster && (
               <button style={styles.btnPrimary} onClick={handleCreate} disabled={loading}>
                 {loading ? 'Création...' : 'Créer une session'}
               </button>
             )}
+            {/* Rejoindre manuellement (joueurs sans session active) */}
             {!activeSession && !isMaster && (
               <button style={styles.btnSecondary} onClick={() => setMode('join')}>
                 Rejoindre avec un code
@@ -99,6 +138,7 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
             <button style={styles.btnLibrary} onClick={() => setShowLibrary(true)}>
               📚 Bibliothèque
             </button>
+            {/* Gestion des membres (master uniquement) */}
             {isMaster && (
               <button style={styles.btnMembers} onClick={() => setShowMembers(true)}>
                 👥 Membres
@@ -107,6 +147,7 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
           </div>
         )}
 
+        {/* Formulaire de saisie manuelle du code */}
         {mode === 'join' && (
           <div style={styles.form}>
             <input
@@ -128,6 +169,7 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
 
         {!mode && error && <p style={styles.error}>{error}</p>}
 
+        {/* Code d'invitation du groupe (master uniquement) */}
         {isMaster && membership.groups?.invite_code && (
           <div style={styles.inviteBox}>
             <p style={styles.inviteLabel}>Code d'invitation du groupe</p>
@@ -140,6 +182,7 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
         </button>
       </div>
 
+      {/* Bibliothèque de ranges */}
       {showLibrary && (
         <LibraryPage
           membership={membership}
@@ -148,6 +191,7 @@ export default function LobbyPage({ membership, onJoined, onLogout }) {
         />
       )}
 
+      {/* Page membres */}
       {showMembers && (
         <MembersPage
           membership={membership}

@@ -1,3 +1,25 @@
+/**
+ * BottomActionBar.jsx — Barre d'actions fixe en bas de l'écran
+ *
+ * Affiche les boutons d'actions disponibles pour colorier les cellules
+ * de la grille de range. L'action sélectionnée est mise en évidence
+ * (contour blanc, opacité pleine, légèrement agrandie).
+ *
+ * Actions disponibles (FOLD exclu — non pertinent en session de review) :
+ * - Call  🟢
+ * - Raise 🔵
+ * - 3Bet  🟠
+ * - 4Bet  🔴
+ * - All In 🟣
+ *
+ * Responsive :
+ * - Desktop : boutons larges avec padding généreux
+ * - Mobile portrait : boutons compacts (padding réduit, font plus petit)
+ *
+ * L'action sélectionnée est stockée dans le store Zustand (selectedAction).
+ * Elle est utilisée par updateCell dans rangeStore pour colorier les cellules.
+ */
+
 import { ACTIONS } from '../../data/actions'
 import { useRangeStore } from '../../stores/rangeStore'
 
@@ -14,6 +36,7 @@ export default function BottomActionBar() {
       padding: isMobile && isPortrait ? '8px 6px' : '10px 16px',
       gap: isMobile && isPortrait ? '4px' : '10px',
     }}>
+      {/* FOLD est filtré car non utilisé en session de review */}
       {ACTIONS.filter((a) => a.id !== 'FOLD').map((action) => (
         <button
           key={action.id}
@@ -24,6 +47,7 @@ export default function BottomActionBar() {
             fontSize: isMobile && isPortrait ? '11px' : '14px',
             borderRadius: isMobile && isPortrait ? '8px' : '10px',
             background: action.color,
+            // Mise en évidence de l'action sélectionnée
             outline: selectedAction.id === action.id ? '3px solid white' : 'none',
             outlineOffset: '2px',
             opacity: selectedAction.id === action.id ? 1 : 0.6,

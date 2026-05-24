@@ -1,3 +1,12 @@
+/**
+ * App.jsx — Point d'entrée principal de l'application
+ *
+ * Gère :
+ * - L'authentification Supabase (connexion persistante)
+ * - La reconnexion automatique à une session live via localStorage
+ * - Le routing entre les pages (Login → Group → Lobby → Dashboard)
+ */
+
 import { useState, useEffect } from 'react'
 import LobbyPage from './pages/LobbyPage'
 import DashboardPage from './pages/DashboardPage'
@@ -6,9 +15,18 @@ import GroupPage from './pages/GroupPage'
 import { supabase } from './lib/supabase'
 import { useRangeStore } from './stores/rangeStore'
 
+/**
+ * Fonction extraite du composant pour éviter les problèmes de closure dans useEffect.
+ * Appelée à chaque changement d'état auth (connexion, reconnexion, rechargement).
+ *
+ * @param {object} authSession - Session Supabase Auth
+ * @param {object} handlers - Setters React du composant App
+ */
 async function handleAuthSession(authSession, { setAuthUser, setMembership, setPlayer, setSession, setLoading }) {
+  // Stocke l'utilisateur connecté
   setAuthUser(authSession.user)
 
+  // Récupère le membership du groupe (rôle, pseudo, groupe)
   const { data: memberData } = await supabase
     .from('memberships')
     .select('*, groups(*)')
@@ -17,15 +35,18 @@ async function handleAuthSession(authSession, { setAuthUser, setMembership, setP
 
   setMembership(memberData ?? null)
 
+  // Tente de reconnecter à une session live sauvegardée dans le localStorage
   const saved = localStorage.getItem('poker_session')
   if (saved) {
     const { playerId, sessionId } = JSON.parse(saved)
+
     const { data: playerData } = await supabase
       .from('players')
       .select()
       .eq('id', playerId)
       .single()
 
+    // Vérifie que le joueur appartient bien à la session sauvegardée
     if (playerData && playerData.session_id === sessionId) {
       const { data: sessionData } = await supabase
         .from('sessions')
@@ -34,6 +55,7 @@ async function handleAuthSession(authSession, { setAuthUser, setMembership, setP
         .single()
 
       if (sessionData) {
+        // Restaure la session et la range dans le store
         setPlayer(playerData)
         setSession(sessionData)
 
@@ -46,9 +68,11 @@ async function handleAuthSession(authSession, { setAuthUser, setMembership, setP
         if (playerData.context?.stackSize) setStackSizeSilent(playerData.context.stackSize)
         setVersusSilent(versus)
       } else {
+        // Session introuvable en base → on vide le localStorage
         localStorage.removeItem('poker_session')
       }
     } else {
+      // Joueur invalide ou session différente → on vide le localStorage
       localStorage.removeItem('poker_session')
     }
   }
@@ -57,18 +81,18 @@ async function handleAuthSession(authSession, { setAuthUser, setMembership, setP
 }
 
 export default function App() {
-  const [authUser, setAuthUser] = useState(null)
-  const [membership, setMembership] = useState(null)
-  const [session, setSession] = useState(null)
-  const [player, setPlayer] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const reset = useRangeStore((state) => state.reset)
+  const [authUser, setAuthUser] = useState(null)       // Utilisateur Supabase Auth
+  const [membership, setMembership] = useState(null)   // Membership du groupe
+  const [session, setSession] = useState(null)         // Session live active
+  const [player, setPlayer] = useState(null)           // Joueur courant dans la session
+  const [loading, setLoading] = useState(true)         // Chargement initial
+  const reset = useRangeStore((state) => state.reset)  // Reset du store Zustand
 
   useEffect(() => {
     const handlers = { setAuthUser, setMembership, setPlayer, setSession, setLoading }
 
+    // Vérifie s'il y a déjà une session auth active au démarrage
     supabase.auth.getSession().then(async ({ data: { session: authSession }, error }) => {
-      console.log('getSession result:', authSession, 'error:', error)
       if (error || !authSession) {
         setLoading(false)
         return
@@ -79,8 +103,8 @@ export default function App() {
       setLoading(false)
     })
 
+    // Écoute les changements d'état auth (login, logout, token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
-      console.log('onAuthStateChange fired', event, authSession)
       if (!authSession) {
         setAuthUser(null)
         setMembership(null)
@@ -93,6 +117,10 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [])
 
+  /**
+   * Appelé quand le joueur rejoint ou crée une session live.
+   * Sauvegarde les ids dans le localStorage pour la reconnexion automatique.
+   */
   const handleJoined = ({ session, player }) => {
     localStorage.setItem('poker_session', JSON.stringify({
       playerId: player.id,
@@ -105,6 +133,10 @@ export default function App() {
     setPlayer(player)
   }
 
+  /**
+   * Appelé quand le joueur quitte la session live.
+   * Vide le localStorage et reset le store.
+   */
   const handleLeave = () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -112,6 +144,10 @@ export default function App() {
     setPlayer(null)
   }
 
+  /**
+   * Appelé quand l'utilisateur se déconnecte complètement.
+   * Vide tout et déconnecte Supabase Auth.
+   */
   const handleLogout = async () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -126,6 +162,7 @@ export default function App() {
     setMembership(memberData)
   }
 
+  // Écran de chargement initial
   if (loading) {
     return (
       <div style={{
@@ -142,6 +179,7 @@ export default function App() {
     )
   }
 
+  // Routing selon l'état de l'application
   if (!authUser) return <LoginPage />
   if (!membership) return <GroupPage user={authUser} onGroupJoined={handleGroupJoined} />
   if (!session) return <LobbyPage membership={membership} onJoined={handleJoined} onLogout={handleLogout} />

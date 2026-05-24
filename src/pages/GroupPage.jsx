@@ -1,26 +1,49 @@
+/**
+ * GroupPage.jsx — Page de création ou de rejointe d'un groupe
+ *
+ * Affichée après la connexion si l'utilisateur n'appartient à aucun groupe.
+ *
+ * Deux modes :
+ * - 'create' : crée un nouveau groupe (devient master)
+ * - 'join' : rejoint un groupe existant via un code d'invitation à 8 caractères
+ *
+ * Le code d'invitation est généré aléatoirement à la création du groupe.
+ */
+
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 
+/**
+ * Génère un code d'invitation unique à 8 caractères.
+ * Utilise un alphabet sans caractères ambigus.
+ */
 function generateInviteCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   return Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
 }
 
 export default function GroupPage({ user, onGroupJoined }) {
-  const [mode, setMode] = useState(null) // 'create' | 'join'
-  const [groupName, setGroupName] = useState('')
-  const [inviteCode, setInviteCode] = useState('')
+  const [mode, setMode] = useState(null)           // null | 'create' | 'join'
+  const [groupName, setGroupName] = useState('')   // Nom du groupe à créer
+  const [inviteCode, setInviteCode] = useState('') // Code d'invitation à saisir
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
+  // Pseudo récupéré depuis les métadonnées Supabase Auth (ou email par défaut)
   const username = user.user_metadata?.username ?? user.email
 
+  /**
+   * Crée un nouveau groupe et y ajoute l'utilisateur comme master.
+   * Le code d'invitation est généré automatiquement.
+   */
   const handleCreate = async () => {
     if (!groupName.trim()) return setError('Entrez un nom de groupe')
     setLoading(true)
     setError(null)
     try {
       const code = generateInviteCode()
+
+      // Crée le groupe
       const { data: group, error: groupError } = await supabase
         .from('groups')
         .insert({ name: groupName.trim(), invite_code: code })
@@ -28,6 +51,7 @@ export default function GroupPage({ user, onGroupJoined }) {
         .single()
       if (groupError) throw groupError
 
+      // Ajoute l'utilisateur comme master
       const { data: member, error: memberError } = await supabase
         .from('memberships')
         .insert({ user_id: user.id, group_id: group.id, role: 'master', username })
@@ -43,11 +67,16 @@ export default function GroupPage({ user, onGroupJoined }) {
     }
   }
 
+  /**
+   * Rejoint un groupe existant via son code d'invitation.
+   * L'utilisateur est ajouté comme membre (role: 'member').
+   */
   const handleJoin = async () => {
-    if (!inviteCode.trim()) return setError('Entrez le code d\'invitation')
+    if (!inviteCode.trim()) return setError("Entrez le code d'invitation")
     setLoading(true)
     setError(null)
     try {
+      // Cherche le groupe par code d'invitation
       const { data: group, error: groupError } = await supabase
         .from('groups')
         .select()
@@ -55,6 +84,7 @@ export default function GroupPage({ user, onGroupJoined }) {
         .single()
       if (groupError || !group) throw new Error('Code invalide')
 
+      // Ajoute l'utilisateur comme membre
       const { data: member, error: memberError } = await supabase
         .from('memberships')
         .insert({ user_id: user.id, group_id: group.id, role: 'member', username })
@@ -77,6 +107,7 @@ export default function GroupPage({ user, onGroupJoined }) {
         <p style={styles.subtitle}>Bienvenue, <strong style={{ color: 'white' }}>{username}</strong></p>
         <p style={styles.hint}>Rejoignez ou créez un groupe pour continuer.</p>
 
+        {/* Choix initial */}
         {!mode && (
           <div style={styles.buttons}>
             <button style={styles.btnPrimary} onClick={() => setMode('create')}>
@@ -88,6 +119,7 @@ export default function GroupPage({ user, onGroupJoined }) {
           </div>
         )}
 
+        {/* Formulaire de création */}
         {mode === 'create' && (
           <div style={styles.form}>
             <input
@@ -106,6 +138,7 @@ export default function GroupPage({ user, onGroupJoined }) {
           </div>
         )}
 
+        {/* Formulaire de rejointe */}
         {mode === 'join' && (
           <div style={styles.form}>
             <input
@@ -125,6 +158,7 @@ export default function GroupPage({ user, onGroupJoined }) {
           </div>
         )}
 
+        {/* Bouton de déconnexion */}
         <button style={styles.logoutBtn} onClick={() => supabase.auth.signOut()}>
           Se déconnecter
         </button>
