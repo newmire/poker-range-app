@@ -17,14 +17,9 @@ import GroupSelectPage from './pages/GroupSelectPage'
 import { supabase } from './lib/supabase'
 import { useRangeStore } from './stores/rangeStore'
 
-/**
- * Fonction extraite du composant pour éviter les problèmes de closure dans useEffect.
- * Appelée à chaque changement d'état auth (connexion, reconnexion, rechargement).
- */
 async function handleAuthSession(authSession, { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }) {
   setAuthUser(authSession.user)
 
-  // Récupère tous les memberships de l'utilisateur
   const { data: memberData } = await supabase
     .from('memberships')
     .select('*, groups(*)')
@@ -34,21 +29,15 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
   setMemberships(memberships)
 
   if (memberships.length === 1) {
-    // Un seul groupe → on le charge directement
     setMembership(memberships[0])
     await restoreSession(memberships[0], { setPlayer, setSession })
   } else if (memberships.length === 0) {
-    // Aucun groupe → affiche GroupPage
     setMembership(null)
   }
-  // Si plusieurs groupes → GroupSelectPage s'affiche (membership reste null)
 
   setLoading(false)
 }
 
-/**
- * Tente de reconnecter à une session live sauvegardée dans le localStorage.
- */
 async function restoreSession(membership, { setPlayer, setSession }) {
   const saved = localStorage.getItem('poker_session')
   if (!saved) return
@@ -90,8 +79,8 @@ async function restoreSession(membership, { setPlayer, setSession }) {
 
 export default function App() {
   const [authUser, setAuthUser] = useState(null)
-  const [memberships, setMemberships] = useState([])    // Tous les groupes de l'utilisateur
-  const [membership, setMembership] = useState(null)    // Groupe actif sélectionné
+  const [memberships, setMemberships] = useState([])
+  const [membership, setMembership] = useState(null)
   const [session, setSession] = useState(null)
   const [player, setPlayer] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -101,10 +90,10 @@ export default function App() {
   useEffect(() => {
     const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }
 
-    // Après 5 secondes, affiche le bouton "Réessayer"
+    // Après 15 secondes, affiche le bouton "Réessayer"
     const slowTimeout = setTimeout(() => {
       setLoadingTooLong(true)
-    }, 5000)
+    }, 15000)
 
     supabase.auth.getSession().then(async ({ data: { session: authSession }, error }) => {
       clearTimeout(slowTimeout)
@@ -172,19 +161,11 @@ export default function App() {
     setMembership(memberData)
   }
 
-  /**
-   * Sélectionne un groupe depuis GroupSelectPage.
-   * Tente de reconnecter à une session live sauvegardée.
-   */
   const handleSelectGroup = async (m) => {
     setMembership(m)
     await restoreSession(m, { setPlayer, setSession })
   }
 
-  /**
-   * Retourne à la sélection de groupe depuis le lobby.
-   * Disponible uniquement si l'utilisateur a plusieurs groupes.
-   */
   const handleSwitchGroup = () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -231,7 +212,6 @@ export default function App() {
 
   if (!authUser) return <LoginPage />
 
-  // Plusieurs groupes et aucun sélectionné → sélection
   if (authUser && memberships.length > 1 && !membership) {
     return (
       <GroupSelectPage
@@ -241,7 +221,6 @@ export default function App() {
     )
   }
 
-  // Aucun groupe → créer ou rejoindre
   if (!membership) return <GroupPage user={authUser} onGroupJoined={handleGroupJoined} />
 
   if (!session) return (
