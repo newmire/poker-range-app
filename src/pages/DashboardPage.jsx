@@ -11,9 +11,10 @@
  * - Indicateur Realtime (point vert/rouge) pour indiquer l'état de la connexion
  * - Spinner + flash vert sur le bouton Sauvegarder
  * - Nombre d'utilisateurs connectés dans la liste joueurs
+ * - Toast notification quand un joueur rejoint (master uniquement)
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import RangeGrid from '../components/RangeGrid/RangeGrid'
 import BottomActionBar from '../components/Layout/BottomActionBar'
 import { useRangeStore } from '../stores/rangeStore'
@@ -70,7 +71,6 @@ function EyeClosed({ color = '#444' }) {
   )
 }
 
-/** Spinner SVG animé pour la sauvegarde en cours */
 function Spinner() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 0.8s linear infinite' }}>
@@ -78,6 +78,36 @@ function Spinner() {
       <path d="M12 2a10 10 0 0 1 10 10"/>
       <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
     </svg>
+  )
+}
+
+/**
+ * Toast notification — affiché en bas à droite pendant 3 secondes.
+ */
+function Toast({ message }) {
+  return (
+    <div style={{
+      position: 'fixed',
+      bottom: '80px',
+      right: '16px',
+      backgroundColor: '#1a1a1a',
+      border: '1px solid #22c55e',
+      borderRadius: '10px',
+      padding: '10px 16px',
+      color: '#22c55e',
+      fontSize: '13px',
+      zIndex: 500,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+      animation: 'fadeInUp 0.2s ease',
+    }}>
+      <style>{`
+        @keyframes fadeInUp {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+      {message}
+    </div>
   )
 }
 
@@ -113,7 +143,26 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
 
+  // Toast notification
+  const [toast, setToast] = useState(null)
+  const toastTimeout = useRef(null)
+
   const master = isMasterFn(session, player)
+
+  /**
+   * Affiche un toast pendant 3 secondes puis le cache.
+   */
+  const showToast = (message) => {
+    if (toastTimeout.current) clearTimeout(toastTimeout.current)
+    setToast(message)
+    toastTimeout.current = setTimeout(() => setToast(null), 3000)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeout.current) clearTimeout(toastTimeout.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (!membership?.id) return
@@ -148,11 +197,19 @@ export default function DashboardPage({ session, player, membership, authUser, o
     })
   }, [session])
 
+  // ─── Realtime joueurs + toast ────────────────────────────────────────────────
+  // Détecte les nouveaux joueurs et affiche un toast côté master
+  const playersRef = useRef([])
   useEffect(() => {
     if (!session) return
     const sub = subscribeToPlayers(session.id, (payload) => {
       getPlayers(session.id).then((updatedPlayers) => {
+        // Détecte un nouveau joueur (INSERT) côté master
+        if (master && payload.eventType === 'INSERT' && payload.new?.id !== player.id) {
+          showToast(`🎮 ${payload.new.name} a rejoint la session`)
+        }
         setPlayers(updatedPlayers)
+        playersRef.current = updatedPlayers
         if (master && payload.new?.id === localViewedId) {
           const updated = updatedPlayers.find((p) => p.id === payload.new.id)
           if (updated) {
@@ -375,7 +432,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
         <button style={styles.button} onClick={clearMatrix}>Clear</button>
 
-        {/* Bouton Sauvegarder avec spinner + flash vert */}
         <button
           style={{
             ...styles.saveBtn,
@@ -442,7 +498,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
         {master && (
           <div style={styles.playerList}>
             <hr style={{ width: '100%', opacity: 0.15, margin: '4px 0' }} />
-            {/* Titre + compteur d'utilisateurs */}
             <p style={styles.playerListTitle}>
               Joueurs · <span style={{ color: '#22c55e' }}>
                 {sortedPlayers.length} utilisateur{sortedPlayers.length > 1 ? 's' : ''}
@@ -489,7 +544,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
         {!master && players.length > 0 && (
           <div style={styles.playerList}>
             <hr style={{ width: '100%', opacity: 0.15, margin: '4px 0' }} />
-            {/* Titre + compteur d'utilisateurs */}
             <p style={styles.playerListTitle}>
               Connectés · <span style={{ color: '#22c55e' }}>
                 {sortedPlayers.length} utilisateur{sortedPlayers.length > 1 ? 's' : ''}
@@ -570,6 +624,9 @@ export default function DashboardPage({ session, player, membership, authUser, o
       )}
 
       <BottomActionBar />
+
+      {/* ── Toast notification ── */}
+      {toast && <Toast message={toast} />}
 
       {/* ── Modal confirmation quitter ── */}
       {showLeaveConfirm && (
