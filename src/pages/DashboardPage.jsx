@@ -8,6 +8,7 @@
  * - La sauvegarde des ranges et du contexte
  * - La modal de confirmation avant de quitter la session
  * - Le marquage is_active=false à la sortie (trigger DB supprime la session si vide)
+ * - Indicateur Realtime (point vert/rouge) pour indiquer l'état de la connexion
  */
 
 import { useEffect, useState } from 'react'
@@ -93,6 +94,9 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const [players, setPlayers] = useState([])
   const [members, setMembers] = useState([])
 
+  // Indicateur de connexion Realtime
+  const [isConnected, setIsConnected] = useState(true)
+
   // ID du joueur affiché localement par le master (navigation sans broadcast)
   const [localViewedId, setLocalViewedId] = useState(player?.id ?? null)
   const [localViewedPlayer, setLocalViewedPlayer] = useState(null)
@@ -107,7 +111,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const [showSaveModal, setShowSaveModal] = useState(false)
   const [showLibrary, setShowLibrary] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
-  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false) // Modal confirmation quitter
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
   const [saveName, setSaveName] = useState('')
   const [saveShared, setSaveShared] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -115,7 +119,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const master = isMasterFn(session, player)
 
   // ─── Heartbeat ──────────────────────────────────────────────────────────────
-  // Met à jour last_seen toutes les 30s pour indiquer que l'utilisateur est actif
   useEffect(() => {
     if (!membership?.id) return
     updateLastSeen(membership.id)
@@ -153,13 +156,11 @@ export default function DashboardPage({ session, player, membership, authUser, o
   }, [session])
 
   // ─── Realtime : changements des joueurs ─────────────────────────────────────
-  // Recharge la liste à chaque UPDATE/INSERT/DELETE sur players
   useEffect(() => {
     if (!session) return
     const sub = subscribeToPlayers(session.id, (payload) => {
       getPlayers(session.id).then((updatedPlayers) => {
         setPlayers(updatedPlayers)
-        // Si le master observe ce joueur, on met à jour la grille
         if (master && payload.new?.id === localViewedId) {
           const updated = updatedPlayers.find((p) => p.id === payload.new.id)
           if (updated) {
@@ -178,7 +179,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
   }, [session, master, localViewedId])
 
   // ─── Realtime : changement du joueur broadcasted ────────────────────────────
-  // Écoute active_player_id sur la session pour synchroniser tous les joueurs
   useEffect(() => {
     if (!session) return
     const sub = subscribeToSession(session.id, (payload) => {
@@ -186,12 +186,10 @@ export default function DashboardPage({ session, player, membership, authUser, o
       setBroadcastedId(newActiveId)
       if (!master) {
         if (newActiveId) {
-          // Broadcast actif : affiche la range imposée par le master
           const activePlayer = players.find((p) => p.id === newActiveId)
           if (activePlayer?.range_reg) setMatrix(activePlayer.range_reg)
           setViewedPlayerId(null)
         } else {
-          // Broadcast stoppé : chaque joueur retrouve sa propre range
           const self = players.find((p) => p.id === player.id)
           if (self?.range_reg) setMatrix(self.range_reg)
           setViewedPlayerId(null)
@@ -200,6 +198,26 @@ export default function DashboardPage({ session, player, membership, authUser, o
     })
     return () => sub.unsubscribe()
   }, [session, player, players, master])
+
+  // ─── Indicateur Realtime ────────────────────────────────────────────────────
+  // Écoute l'état de la connexion WebSocket Supabase
+  // Vert = connecté, Rouge = déconnecté (updates ne passent plus)
+  useEffect(() => {
+    if (!session) return
+
+    const channel = supabase
+      .channel(`realtime-status:${session.id}`)
+      .on('system', {}, (status) => {
+        if (status.extension === 'postgres_changes') {
+          setIsConnected(status.status === 'ok')
+        }
+      })
+      .subscribe((status) => {
+        setIsConnected(status === 'SUBSCRIBED')
+      })
+
+    return () => channel.unsubscribe()
+  }, [session])
 
   // ─── Resize ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -210,7 +228,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
-  /** Retourne la couleur de statut d'un joueur via son username dans members */
   const getMemberStatus = (playerName) => {
     const member = members.find((m) => m.username === playerName)
     return member ? getStatus(member.last_seen) : { color: '#444' }
@@ -218,10 +235,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
   // ─── Handlers master ────────────────────────────────────────────────────────
 
-  /**
-   * Navigation locale du master vers un joueur.
-   * Sauvegarde la range courante avant de changer, ne broadcase pas.
-   */
   const handleSelectPlayer = async (p) => {
     const { matrix, activePlayerId } = useRangeStore.getState()
     if (activePlayerId) await saveRange(activePlayerId, matrix, activeGrid)
@@ -243,26 +256,16 @@ export default function DashboardPage({ session, player, membership, authUser, o
     setActiveGrid(v)
   }
 
-  /**
-   * Toggle broadcast via l'œil.
-   * Œil ouvert = vue imposée à tous / Œil fermé = pas de broadcast.
-   */
   const handleBroadcast = async (p) => {
     if (broadcastedId === p.id) {
-      // Toggle off : stop le broadcast, chacun retrouve sa range
       await setActivePlayer(session.id, null)
       setBroadcastedId(null)
     } else {
-      // Toggle on : broadcast ce joueur à tous
       await setActivePlayer(session.id, p.id)
       setBroadcastedId(p.id)
     }
   }
 
-  /**
-   * Switch entre grille Reg et Fish.
-   * Sauvegarde la grille courante avant de switcher.
-   */
   const handleSelectGrid = async (gridVersus) => {
     if (gridVersus === activeGrid) return
 
@@ -284,9 +287,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
     if (activePlayerId) saveContext(activePlayerId, { position, stackSize, versus: gridVersus })
   }
 
-  /**
-   * Sauvegarde la range courante dans la bibliothèque.
-   */
   const handleSaveToLibrary = async () => {
     if (!saveName.trim()) return
     setSaving(true)
@@ -311,9 +311,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
     }
   }
 
-  /**
-   * Charge une range depuis la bibliothèque dans la grille courante.
-   */
   const handleUseRange = (range) => {
     if (range.range?.length > 0) setMatrix(range.range)
     if (range.context?.position) setPositionSilent(range.context.position)
@@ -330,8 +327,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
    * - Sauvegarde la range courante
    * - Marque le joueur comme inactif (is_active = false)
    * - Le trigger DB supprime la session si tous les joueurs sont inactifs
-   * - Retourne au lobby sans supprimer poker_session du localStorage
-   *   (pour permettre de rejoindre si la session existe encore)
    */
   const handleConfirmLeave = async () => {
     const { matrix, activePlayerId } = useRangeStore.getState()
@@ -343,10 +338,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
   // ─── Handler non-master ─────────────────────────────────────────────────────
 
-  /**
-   * Observation locale de la range d'un autre joueur (non-master).
-   * Clic sur le même joueur = retour à sa propre range.
-   */
   const handleViewPlayer = (p) => {
     if (p.id === viewedPlayerId) {
       setViewedPlayerId(null)
@@ -365,7 +356,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
     ...players.filter((p) => p.id !== player.id),
   ]
 
-  // Desktop master → deux grilles côte à côte
   const showBothGrids = master && !isMobile
 
   // ─── Render ─────────────────────────────────────────────────────────────────
@@ -397,13 +387,26 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
           <h3 style={styles.title}>{master ? '👑 Master' : '🎮 Joueur'}</h3>
-          {/* ✕ ouvre la modal de confirmation */}
           <button style={styles.leaveBtnSmall} onClick={() => setShowLeaveConfirm(true)}>✕</button>
         </div>
 
         {session && (
           <div style={styles.sessionInfo}>
-            <span style={styles.sessionCode}>#{session.code}</span>
+            {/* Code de session + indicateur Realtime */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={styles.sessionCode}>#{session.code}</span>
+              <span
+                title={isConnected ? 'Connecté' : 'Déconnecté — mises à jour suspendues'}
+                style={{
+                  width: '7px',
+                  height: '7px',
+                  borderRadius: '50%',
+                  backgroundColor: isConnected ? '#22c55e' : '#ef4444',
+                  flexShrink: 0,
+                  cursor: 'default',
+                }}
+              />
+            </div>
             <span style={styles.playerName}>{player?.name}</span>
           </div>
         )}
