@@ -9,6 +9,7 @@
  * - La modal de confirmation avant de quitter la session
  * - Le marquage is_active=false à la sortie (trigger DB supprime la session si vide)
  * - Indicateur Realtime (point vert/rouge) pour indiquer l'état de la connexion
+ * - Spinner + flash vert sur le bouton Sauvegarder
  */
 
 import { useEffect, useState } from 'react'
@@ -51,7 +52,6 @@ function getStatus(lastSeen) {
 
 // ─── Icônes œil SVG style Lucide ─────────────────────────────────────────────
 
-/** Œil ouvert — indique la vue broadcastée à tous */
 function EyeOpen({ color = '#22c55e' }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -61,13 +61,23 @@ function EyeOpen({ color = '#22c55e' }) {
   )
 }
 
-/** Œil fermé — vue non broadcastée */
 function EyeClosed({ color = '#444' }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
       <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
       <line x1="1" y1="1" x2="23" y2="23"/>
+    </svg>
+  )
+}
+
+/** Spinner SVG animé pour la sauvegarde en cours */
+function Spinner() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 0.8s linear infinite' }}>
+      <circle cx="12" cy="12" r="10" strokeOpacity="0.3"/>
+      <path d="M12 2a10 10 0 0 1 10 10"/>
+      <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
     </svg>
   )
 }
@@ -93,20 +103,11 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [players, setPlayers] = useState([])
   const [members, setMembers] = useState([])
-
-  // Indicateur de connexion Realtime
   const [isConnected, setIsConnected] = useState(true)
-
-  // ID du joueur affiché localement par le master (navigation sans broadcast)
   const [localViewedId, setLocalViewedId] = useState(player?.id ?? null)
   const [localViewedPlayer, setLocalViewedPlayer] = useState(null)
-
-  // ID du joueur broadcasté à tous via active_player_id en base
   const [broadcastedId, setBroadcastedId] = useState(null)
-
-  // Pour les non-masters : ID du joueur observé localement
   const [viewedPlayerId, setViewedPlayerId] = useState(null)
-
   const [activeGrid, setActiveGrid] = useState('reg')
   const [showSaveModal, setShowSaveModal] = useState(false)
   const [showLibrary, setShowLibrary] = useState(false)
@@ -115,6 +116,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const [saveName, setSaveName] = useState('')
   const [saveShared, setSaveShared] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [saveSuccess, setSaveSuccess] = useState(false) // Flash vert après sauvegarde
 
   const master = isMasterFn(session, player)
 
@@ -126,7 +128,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => clearInterval(interval)
   }, [membership])
 
-  // ─── Chargement des membres pour les statuts (master seulement) ─────────────
+  // ─── Chargement des membres (master seulement) ───────────────────────────────
   useEffect(() => {
     if (!membership?.group_id || !master) return
     getMembers(membership.group_id).then(setMembers)
@@ -136,7 +138,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => clearInterval(interval)
   }, [membership, master])
 
-  // ─── Init playerId dans le store ────────────────────────────────────────────
+  // ─── Init playerId ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (player?.id) setPlayerId(player.id)
   }, [player])
@@ -178,7 +180,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => sub.unsubscribe()
   }, [session, master, localViewedId])
 
-  // ─── Realtime : changement du joueur broadcasted ────────────────────────────
+  // ─── Realtime : broadcast ────────────────────────────────────────────────────
   useEffect(() => {
     if (!session) return
     const sub = subscribeToSession(session.id, (payload) => {
@@ -200,11 +202,8 @@ export default function DashboardPage({ session, player, membership, authUser, o
   }, [session, player, players, master])
 
   // ─── Indicateur Realtime ────────────────────────────────────────────────────
-  // Écoute l'état de la connexion WebSocket Supabase
-  // Vert = connecté, Rouge = déconnecté (updates ne passent plus)
   useEffect(() => {
     if (!session) return
-
     const channel = supabase
       .channel(`realtime-status:${session.id}`)
       .on('system', {}, (status) => {
@@ -215,7 +214,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
       .subscribe((status) => {
         setIsConnected(status === 'SUBSCRIBED')
       })
-
     return () => channel.unsubscribe()
   }, [session])
 
@@ -226,30 +224,22 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  // ─── Helpers ────────────────────────────────────────────────────────────────
-
   const getMemberStatus = (playerName) => {
     const member = members.find((m) => m.username === playerName)
     return member ? getStatus(member.last_seen) : { color: '#444' }
   }
 
-  // ─── Handlers master ────────────────────────────────────────────────────────
+  // ─── Handlers ───────────────────────────────────────────────────────────────
 
   const handleSelectPlayer = async (p) => {
     const { matrix, activePlayerId } = useRangeStore.getState()
     if (activePlayerId) await saveRange(activePlayerId, matrix, activeGrid)
-
     setActivePlayerIdInStore(p.id)
     setLocalViewedId(p.id)
     setLocalViewedPlayer(p)
-
     const v = p.context?.versus ?? 'reg'
     const range = v === 'fish' ? p.range_fish : p.range_reg
-    if (range?.length > 0) {
-      setMatrix(range)
-    } else {
-      clearMatrix()
-    }
+    if (range?.length > 0) { setMatrix(range) } else { clearMatrix() }
     if (p.context?.position) setPositionSilent(p.context.position)
     if (p.context?.stackSize) setStackSizeSilent(p.context.stackSize)
     setVersusSilent(v)
@@ -268,25 +258,25 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
   const handleSelectGrid = async (gridVersus) => {
     if (gridVersus === activeGrid) return
-
     const { matrix, activePlayerId } = useRangeStore.getState()
     await saveRange(activePlayerId, matrix, activeGrid)
-
     const updated = await getPlayers(session.id)
     setPlayers(updated)
     const freshPlayer = updated.find((p) => p.id === localViewedId)
     if (freshPlayer) setLocalViewedPlayer(freshPlayer)
-
     const range = gridVersus === 'fish'
       ? (freshPlayer?.range_fish?.length > 0 ? freshPlayer.range_fish : generateMatrix())
       : (freshPlayer?.range_reg?.length > 0 ? freshPlayer.range_reg : generateMatrix())
-
     setMatrix(range)
     setVersusSilent(gridVersus)
     setActiveGrid(gridVersus)
     if (activePlayerId) saveContext(activePlayerId, { position, stackSize, versus: gridVersus })
   }
 
+  /**
+   * Sauvegarde dans la bibliothèque.
+   * Affiche un spinner pendant la sauvegarde, puis un flash vert 1.5s.
+   */
   const handleSaveToLibrary = async () => {
     if (!saveName.trim()) return
     setSaving(true)
@@ -304,6 +294,9 @@ export default function DashboardPage({ session, player, membership, authUser, o
       setShowSaveModal(false)
       setSaveName('')
       setSaveShared(false)
+      // Flash vert sur le bouton 💾
+      setSaveSuccess(true)
+      setTimeout(() => setSaveSuccess(false), 1500)
     } catch (e) {
       console.error('erreur save:', e)
     } finally {
@@ -322,12 +315,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
     setShowLibrary(false)
   }
 
-  /**
-   * Quitte la session :
-   * - Sauvegarde la range courante
-   * - Marque le joueur comme inactif (is_active = false)
-   * - Le trigger DB supprime la session si tous les joueurs sont inactifs
-   */
   const handleConfirmLeave = async () => {
     const { matrix, activePlayerId } = useRangeStore.getState()
     if (activePlayerId) await saveRange(activePlayerId, matrix, activeGrid)
@@ -335,8 +322,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
     setShowLeaveConfirm(false)
     onLeave()
   }
-
-  // ─── Handler non-master ─────────────────────────────────────────────────────
 
   const handleViewPlayer = (p) => {
     if (p.id === viewedPlayerId) {
@@ -350,7 +335,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
     if (range?.length > 0) setMatrix(range)
   }
 
-  // ─── Tri des joueurs : soi-même en premier ───────────────────────────────────
   const sortedPlayers = [
     ...players.filter((p) => p.id === player.id),
     ...players.filter((p) => p.id !== player.id),
@@ -358,7 +342,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
   const showBothGrids = master && !isMobile
 
-  // ─── Render ─────────────────────────────────────────────────────────────────
   return (
     <div style={{
       minHeight: '100vh',
@@ -392,7 +375,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
         {session && (
           <div style={styles.sessionInfo}>
-            {/* Code de session + indicateur Realtime */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={styles.sessionCode}>#{session.code}</span>
               <span
@@ -412,7 +394,27 @@ export default function DashboardPage({ session, player, membership, authUser, o
         )}
 
         <button style={styles.button} onClick={clearMatrix}>Clear</button>
-        <button style={styles.saveBtn} onClick={() => setShowSaveModal(true)}>💾 Sauvegarder</button>
+
+        {/* Bouton Sauvegarder avec spinner + flash vert */}
+        <button
+          style={{
+            ...styles.saveBtn,
+            backgroundColor: saveSuccess ? '#22c55e22' : 'transparent',
+            borderColor: saveSuccess ? '#22c55e' : '#3b82f6',
+            color: saveSuccess ? '#22c55e' : '#3b82f6',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px',
+            transition: 'all 0.3s',
+          }}
+          onClick={() => setShowSaveModal(true)}
+          disabled={saving}
+        >
+          {saving ? <Spinner /> : saveSuccess ? '✓' : '💾'}
+          {saving ? 'Sauvegarde...' : saveSuccess ? 'Sauvegardé !' : 'Sauvegarder'}
+        </button>
+
         <button style={styles.libraryBtn} onClick={() => setShowLibrary(true)}>📚 Bibliothèque</button>
         {master && (
           <button style={styles.membersBtn} onClick={() => setShowMembers(true)}>👥 Membres</button>
@@ -465,7 +467,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
               const status = getMemberStatus(p.name)
               const isLocalViewed = localViewedId === p.id
               const isBroadcasted = broadcastedId === p.id
-
               return (
                 <div
                   key={p.id}
@@ -508,7 +509,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
               const isMe = p.id === player.id
               const isViewed = viewedPlayerId === p.id
               const isBroadcasted = broadcastedId === p.id
-
               return (
                 <div
                   key={p.id}
@@ -581,7 +581,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
       <BottomActionBar />
 
-      {/* ── Modal confirmation quitter la session ── */}
+      {/* ── Modal confirmation quitter ── */}
       {showLeaveConfirm && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
@@ -589,12 +589,8 @@ export default function DashboardPage({ session, player, membership, authUser, o
             <p style={styles.modalContext}>
               Ta range sera sauvegardée. Tu pourras rejoindre si la session est encore active.
             </p>
-            <button style={styles.btnPrimary} onClick={handleConfirmLeave}>
-              Quitter
-            </button>
-            <button style={styles.btnSecondary} onClick={() => setShowLeaveConfirm(false)}>
-              Annuler
-            </button>
+            <button style={styles.btnPrimary} onClick={handleConfirmLeave}>Quitter</button>
+            <button style={styles.btnSecondary} onClick={() => setShowLeaveConfirm(false)}>Annuler</button>
           </div>
         </div>
       )}
