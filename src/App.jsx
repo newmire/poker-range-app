@@ -1,5 +1,11 @@
 /**
  * App.jsx — Point d'entrée principal de l'application
+ *
+ * Gère :
+ * - L'authentification Supabase (connexion persistante)
+ * - La reconnexion automatique à une session live via localStorage
+ * - Le routing entre les pages (Login → GroupSelect → Group → Lobby → Dashboard)
+ * - La gestion multi-groupes (un utilisateur peut appartenir à plusieurs groupes)
  */
 
 import { useState, useEffect } from 'react'
@@ -28,6 +34,7 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
   } else if (memberships.length === 0) {
     setMembership(null)
   }
+  // Si plusieurs groupes → GroupSelectPage (membership reste null)
 
   setLoading(false)
 }
@@ -78,31 +85,55 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [player, setPlayer] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadingTooLong, setLoadingTooLong] = useState(false)
   const reset = useRangeStore((state) => state.reset)
 
   useEffect(() => {
     const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }
     let handled = false
 
+    const slowTimeout = setTimeout(() => {
+      setLoadingTooLong(true)
+    }, 5000)
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
       console.log('onAuthStateChange:', event, !!authSession)
       handled = true
-      if (!authSession) {
+      clearTimeout(slowTimeout)
+      setLoadingTooLong(false)
+
+      if (event === 'TOKEN_REFRESHED' && !authSession) {
+        localStorage.clear()
         setAuthUser(null)
         setMemberships([])
         setMembership(null)
         setLoading(false)
         return
       }
+
+      if (!authSession) {
+        localStorage.removeItem('poker_session')
+        setAuthUser(null)
+        setMemberships([])
+        setMembership(null)
+        setLoading(false)
+        return
+      }
+
       await handleAuthSession(authSession, handlers)
     })
 
-    // Fallback : si onAuthStateChange ne se déclenche pas dans les 3s, on appelle getSession manuellement
     const fallbackTimeout = setTimeout(async () => {
       if (handled) return
       console.log('fallback getSession')
       try {
-        const { data: { session: authSession } } = await supabase.auth.getSession()
+        const { data: { session: authSession }, error } = await supabase.auth.getSession()
+        if (error) {
+          console.error('fallback getSession error:', error)
+          localStorage.clear()
+          setLoading(false)
+          return
+        }
         if (!authSession) {
           setLoading(false)
           return
@@ -110,12 +141,14 @@ export default function App() {
         await handleAuthSession(authSession, handlers)
       } catch (e) {
         console.error('fallback error:', e)
+        localStorage.clear()
         setLoading(false)
       }
     }, 3000)
 
     return () => {
       subscription.unsubscribe()
+      clearTimeout(slowTimeout)
       clearTimeout(fallbackTimeout)
     }
   }, [])
@@ -155,9 +188,13 @@ export default function App() {
     setMembership(memberData)
   }
 
-  const handleSelectGroup = async (m) => {
+  // Sélection d'un groupe — vide la session précédente pour aller au lobby
+  const handleSelectGroup = (m) => {
+    localStorage.removeItem('poker_session')
+    reset()
+    setSession(null)
+    setPlayer(null)
     setMembership(m)
-    await restoreSession(m, { setPlayer, setSession })
   }
 
   const handleSwitchGroup = () => {
@@ -174,10 +211,32 @@ export default function App() {
         minHeight: '100vh',
         backgroundColor: '#0a0a0a',
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: '16px',
       }}>
         <p style={{ color: '#666', fontSize: '14px', margin: 0 }}>Chargement...</p>
+        {loadingTooLong && (
+          <>
+            <p style={{ color: '#444', fontSize: '12px', margin: 0 }}>La connexion prend du temps...</p>
+            <button
+              onClick={() => window.location.reload()}
+              style={{
+                padding: '10px 24px',
+                borderRadius: '8px',
+                border: 'none',
+                backgroundColor: '#22c55e',
+                color: 'white',
+                fontWeight: 'bold',
+                fontSize: '14px',
+                cursor: 'pointer',
+              }}
+            >
+              Réessayer
+            </button>
+          </>
+        )}
       </div>
     )
   }
