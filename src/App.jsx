@@ -87,8 +87,6 @@ export default function App() {
   const [player, setPlayer] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadingTooLong, setLoadingTooLong] = useState(false)
-
-  // True quand Supabase détecte un lien de réinitialisation de mot de passe
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
 
   const reset = useRangeStore((state) => state.reset)
@@ -96,6 +94,17 @@ export default function App() {
   useEffect(() => {
     const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }
     let handled = false
+
+    // ─── Détection immédiate d'un lien de recovery dans l'URL ───────────────
+    // Quand l'utilisateur clique le lien de réinitialisation, Supabase redirige
+    // vers l'app avec #access_token=...&type=recovery dans l'URL.
+    // On détecte ça avant tout pour éviter le chargement infini.
+    const hash = window.location.hash
+    if (hash.includes('type=recovery')) {
+      setIsPasswordRecovery(true)
+      setLoading(false)
+      return
+    }
 
     const slowTimeout = setTimeout(() => {
       setLoadingTooLong(true)
@@ -106,7 +115,7 @@ export default function App() {
       clearTimeout(slowTimeout)
       setLoadingTooLong(false)
 
-      // Lien de réinitialisation cliqué → affiche ResetPasswordPage
+      // Event PASSWORD_RECOVERY — lien cliqué mais hash pas encore dans l'URL
       if (event === 'PASSWORD_RECOVERY') {
         setIsPasswordRecovery(true)
         setLoading(false)
@@ -264,6 +273,8 @@ export default function App() {
       <ResetPasswordPage
         onDone={() => {
           setIsPasswordRecovery(false)
+          // Nettoie le hash de l'URL après reset
+          window.history.replaceState(null, '', window.location.pathname)
         }}
       />
     )
