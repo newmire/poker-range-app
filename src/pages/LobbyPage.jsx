@@ -9,6 +9,8 @@
  * - Bouton "Changer de groupe" si l'utilisateur appartient à plusieurs groupes
  * - Bouton "Rejoindre / Créer un groupe" pour rejoindre un nouveau groupe
  * - Bouton "Quitter le groupe" pour les joueurs (pas le master)
+ * - Copier le code de session en un clic (bouton 📋)
+ * - Copier le code d'invitation du groupe en un clic
  */
 
 import { useState, useEffect } from 'react'
@@ -25,15 +27,19 @@ import MembersPage from './MembersPage'
 import GroupPage from './GroupPage'
 
 export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGroup, onLeaveGroup, authUser }) {
-  const [mode, setMode] = useState(null)               // null | 'join'
-  const [code, setCode] = useState('')                 // Code de session saisi manuellement
+  const [mode, setMode] = useState(null)
+  const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [activeSession, setActiveSession] = useState(null) // Session active du groupe
+  const [activeSession, setActiveSession] = useState(null)
   const [showLibrary, setShowLibrary] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
-  const [showGroupModal, setShowGroupModal] = useState(false)     // Modal rejoindre/créer groupe
-  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false) // Modal confirmation quitter groupe
+  const [showGroupModal, setShowGroupModal] = useState(false)
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
+
+  // États pour le feedback de copie
+  const [copiedSession, setCopiedSession] = useState(false)
+  const [copiedInvite, setCopiedInvite] = useState(false)
 
   const username = membership.username
   const groupId = membership.group_id
@@ -48,7 +54,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   }, [membership])
 
   // ─── Détection automatique de la session active ───────────────────────────
-  // Charge la session active au montage puis écoute les nouvelles sessions en Realtime
   useEffect(() => {
     if (!groupId) return
     getActiveSession(groupId).then(setActiveSession)
@@ -58,9 +63,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     return () => sub.unsubscribe()
   }, [groupId])
 
-  /**
-   * Crée une nouvelle session (master uniquement).
-   */
   const handleCreate = async () => {
     setLoading(true)
     setError(null)
@@ -74,11 +76,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     }
   }
 
-  /**
-   * Rejoint une session via son code.
-   * Si sessionCode est fourni, l'utilise directement (session active détectée).
-   * Sinon, utilise le code saisi manuellement.
-   */
   const handleJoin = async (sessionCode) => {
     setLoading(true)
     setError(null)
@@ -92,14 +89,32 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     }
   }
 
-  /**
-   * Quitte le groupe après confirmation.
-   * Supprime le membership de l'utilisateur et remonte l'événement à App.jsx.
-   */
   const handleLeaveGroup = async () => {
     await leaveGroup(membership.id)
     setShowLeaveConfirm(false)
     onLeaveGroup()
+  }
+
+  /**
+   * Copie le code de session dans le presse-papier.
+   * Affiche un feedback visuel ✓ pendant 1.5s.
+   */
+  const handleCopySessionCode = () => {
+    if (!activeSession?.code) return
+    navigator.clipboard.writeText(activeSession.code)
+    setCopiedSession(true)
+    setTimeout(() => setCopiedSession(false), 1500)
+  }
+
+  /**
+   * Copie le code d'invitation du groupe dans le presse-papier.
+   * Affiche un feedback visuel ✓ pendant 1.5s.
+   */
+  const handleCopyInviteCode = () => {
+    if (!membership.groups?.invite_code) return
+    navigator.clipboard.writeText(membership.groups.invite_code)
+    setCopiedInvite(true)
+    setTimeout(() => setCopiedInvite(false), 1500)
   }
 
   return (
@@ -107,18 +122,34 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       <div style={styles.card}>
         <h1 style={styles.title}>🃏 Poker Range</h1>
 
-        {/* Infos du groupe et du membre */}
         <div style={styles.groupInfo}>
           <span style={styles.groupName}>👥 {membership.groups?.name}</span>
           <span style={styles.username}>{username}</span>
           {isMaster && <span style={styles.masterBadge}>👑 Master</span>}
         </div>
 
-        {/* Session active détectée automatiquement (joueurs uniquement) */}
+        {/* Session active avec bouton copier */}
         {activeSession && !mode && !isMaster && (
           <div style={styles.activeSessionBox}>
             <p style={styles.activeSessionLabel}>Session en cours</p>
-            <span style={styles.activeSessionCode}>#{activeSession.code}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={styles.activeSessionCode}>#{activeSession.code}</span>
+              <button
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: copiedSession ? '#22c55e' : '#666',
+                  fontSize: '16px',
+                  padding: '2px',
+                  transition: 'color 0.2s',
+                }}
+                onClick={handleCopySessionCode}
+                title="Copier le code"
+              >
+                {copiedSession ? '✓' : '📋'}
+              </button>
+            </div>
             <button
               style={styles.btnPrimary}
               onClick={() => handleJoin(activeSession.code)}
@@ -129,16 +160,13 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
           </div>
         )}
 
-        {/* Boutons principaux */}
         {!mode && (
           <div style={styles.buttons}>
-            {/* Créer une session (master uniquement) */}
             {isMaster && (
               <button style={styles.btnPrimary} onClick={handleCreate} disabled={loading}>
                 {loading ? 'Création...' : 'Créer une session'}
               </button>
             )}
-            {/* Rejoindre manuellement (joueurs sans session active) */}
             {!activeSession && !isMaster && (
               <button style={styles.btnSecondary} onClick={() => setMode('join')}>
                 Rejoindre avec un code
@@ -147,23 +175,19 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
             <button style={styles.btnLibrary} onClick={() => setShowLibrary(true)}>
               📚 Bibliothèque
             </button>
-            {/* Gestion des membres (master uniquement) */}
             {isMaster && (
               <button style={styles.btnMembers} onClick={() => setShowMembers(true)}>
                 👥 Membres
               </button>
             )}
-            {/* Changer de groupe (si plusieurs groupes) */}
             {onSwitchGroup && (
               <button style={styles.btnSwitch} onClick={onSwitchGroup}>
                 🔄 Changer de groupe
               </button>
             )}
-            {/* Rejoindre ou créer un nouveau groupe */}
             <button style={styles.btnNewGroup} onClick={() => setShowGroupModal(true)}>
               ➕ Rejoindre / Créer un groupe
             </button>
-            {/* Quitter le groupe (joueurs uniquement, pas le master) */}
             {!isMaster && (
               <button style={styles.btnLeave} onClick={() => setShowLeaveConfirm(true)}>
                 🚪 Quitter le groupe
@@ -172,7 +196,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
           </div>
         )}
 
-        {/* Formulaire de saisie manuelle du code */}
         {mode === 'join' && (
           <div style={styles.form}>
             <input
@@ -194,11 +217,28 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
 
         {!mode && error && <p style={styles.error}>{error}</p>}
 
-        {/* Code d'invitation du groupe (master uniquement) */}
+        {/* Code d'invitation du groupe avec bouton copier */}
         {isMaster && membership.groups?.invite_code && (
           <div style={styles.inviteBox}>
             <p style={styles.inviteLabel}>Code d'invitation du groupe</p>
-            <span style={styles.inviteCode}>{membership.groups.invite_code}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={styles.inviteCode}>{membership.groups.invite_code}</span>
+              <button
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: copiedInvite ? '#22c55e' : '#666',
+                  fontSize: '16px',
+                  padding: '2px',
+                  transition: 'color 0.2s',
+                }}
+                onClick={handleCopyInviteCode}
+                title="Copier le code d'invitation"
+              >
+                {copiedInvite ? '✓' : '📋'}
+              </button>
+            </div>
           </div>
         )}
 
@@ -207,7 +247,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
         </button>
       </div>
 
-      {/* ─── Modal confirmation quitter le groupe ──────────────────────────── */}
+      {/* ─── Modal confirmation quitter le groupe ── */}
       {showLeaveConfirm && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
@@ -226,7 +266,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
         </div>
       )}
 
-      {/* ─── Modal rejoindre / créer un groupe ────────────────────────────── */}
+      {/* ─── Modal rejoindre / créer un groupe ── */}
       {showGroupModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
@@ -236,9 +276,8 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
             </div>
             <GroupPage
               user={authUser}
-              onGroupJoined={(memberData) => {
+              onGroupJoined={() => {
                 setShowGroupModal(false)
-                // Recharge l'app pour prendre en compte le nouveau groupe
                 if (onSwitchGroup) onSwitchGroup()
               }}
               inline
@@ -247,7 +286,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
         </div>
       )}
 
-      {/* Bibliothèque de ranges */}
       {showLibrary && (
         <LibraryPage
           membership={membership}
@@ -256,7 +294,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
         />
       )}
 
-      {/* Page membres */}
       {showMembers && (
         <MembersPage
           membership={membership}
