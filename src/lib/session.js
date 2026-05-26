@@ -23,42 +23,57 @@ export function generateCode() {
 
 /**
  * Crée une nouvelle session live et y ajoute le master comme premier joueur.
+ * Retry automatique jusqu'à 3 fois en cas d'erreur réseau.
  *
  * @param {string} masterName - Pseudo du master
  * @param {object} context - Contexte de la session (optionnel)
  * @param {string} groupId - ID du groupe auquel appartient la session
+ * @param {number} attempt - Numéro de tentative (interne, ne pas passer manuellement)
  * @returns {{ session, player }} - La session créée et le joueur master
  */
-export async function createSession(masterName, context, groupId) {
-  const code = generateCode()
+export async function createSession(masterName, context, groupId, attempt = 1) {
+  const MAX_ATTEMPTS = 3
+  const RETRY_DELAY = 2000 // 2 secondes entre chaque tentative
 
-  const { data: session, error: sessionError } = await supabase
-    .from('sessions')
-    .insert({ code, context, group_id: groupId })
-    .select()
-    .single()
-  if (sessionError) throw sessionError
+  try {
+    const code = generateCode()
 
-  const { data: player, error: playerError } = await supabase
-    .from('players')
-    .insert({ session_id: session.id, name: masterName, role: 'master' })
-    .select()
-    .single()
-  if (playerError) throw playerError
+    const { data: session, error: sessionError } = await supabase
+      .from('sessions')
+      .insert({ code, context, group_id: groupId })
+      .select()
+      .single()
+    if (sessionError) throw sessionError
 
-  await supabase
-    .from('sessions')
-    .update({ master_id: player.id })
-    .eq('id', session.id)
+    const { data: player, error: playerError } = await supabase
+      .from('players')
+      .insert({ session_id: session.id, name: masterName, role: 'master' })
+      .select()
+      .single()
+    if (playerError) throw playerError
 
-  const { data: updatedSession, error: fetchError } = await supabase
-    .from('sessions')
-    .select()
-    .eq('id', session.id)
-    .single()
-  if (fetchError) throw fetchError
+    await supabase
+      .from('sessions')
+      .update({ master_id: player.id })
+      .eq('id', session.id)
 
-  return { session: updatedSession, player }
+    const { data: updatedSession, error: fetchError } = await supabase
+      .from('sessions')
+      .select()
+      .eq('id', session.id)
+      .single()
+    if (fetchError) throw fetchError
+
+    return { session: updatedSession, player }
+
+  } catch (error) {
+    if (attempt < MAX_ATTEMPTS) {
+      console.warn(`createSession tentative ${attempt} échouée, retry dans ${RETRY_DELAY}ms...`, error)
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY))
+      return createSession(masterName, context, groupId, attempt + 1)
+    }
+    throw error
+  }
 }
 
 /**
