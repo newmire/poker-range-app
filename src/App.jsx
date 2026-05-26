@@ -6,6 +6,7 @@
  * - La reconnexion automatique à une session live via localStorage
  * - Le routing entre les pages (Login → GroupSelect → Group → Lobby → Dashboard)
  * - La gestion multi-groupes (un utilisateur peut appartenir à plusieurs groupes)
+ * - La réinitialisation du mot de passe (event PASSWORD_RECOVERY)
  */
 
 import { useState, useEffect } from 'react'
@@ -14,17 +15,13 @@ import DashboardPage from './pages/DashboardPage'
 import LoginPage from './pages/LoginPage'
 import GroupPage from './pages/GroupPage'
 import GroupSelectPage from './pages/GroupSelectPage'
+import ResetPasswordPage from './pages/ResetPasswordPage'
 import { supabase } from './lib/supabase'
 import { useRangeStore } from './stores/rangeStore'
 
-/**
- * Fonction extraite du composant pour éviter les problèmes de closure dans useEffect.
- * Appelée à chaque changement d'état auth (connexion, reconnexion, rechargement).
- */
 async function handleAuthSession(authSession, { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }) {
   setAuthUser(authSession.user)
 
-  // Récupère tous les memberships de l'utilisateur
   const { data: memberData } = await supabase
     .from('memberships')
     .select('*, groups(*)')
@@ -34,21 +31,15 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
   setMemberships(memberships)
 
   if (memberships.length === 1) {
-    // Un seul groupe → on le charge directement
     setMembership(memberships[0])
     await restoreSession(memberships[0], { setPlayer, setSession })
   } else if (memberships.length === 0) {
-    // Aucun groupe → affiche GroupPage
     setMembership(null)
   }
-  // Si plusieurs groupes → GroupSelectPage (membership reste null)
 
   setLoading(false)
 }
 
-/**
- * Tente de reconnecter à une session live sauvegardée dans le localStorage.
- */
 async function restoreSession(membership, { setPlayer, setSession }) {
   const saved = localStorage.getItem('poker_session')
   if (!saved) return
@@ -90,30 +81,38 @@ async function restoreSession(membership, { setPlayer, setSession }) {
 
 export default function App() {
   const [authUser, setAuthUser] = useState(null)
-  const [memberships, setMemberships] = useState([])    // Tous les groupes de l'utilisateur
-  const [membership, setMembership] = useState(null)    // Groupe actif sélectionné
+  const [memberships, setMemberships] = useState([])
+  const [membership, setMembership] = useState(null)
   const [session, setSession] = useState(null)
   const [player, setPlayer] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadingTooLong, setLoadingTooLong] = useState(false)
+
+  // True quand Supabase détecte un lien de réinitialisation de mot de passe
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
+
   const reset = useRangeStore((state) => state.reset)
 
   useEffect(() => {
     const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }
     let handled = false
 
-    // Après 5 secondes, affiche le bouton "Réessayer"
     const slowTimeout = setTimeout(() => {
       setLoadingTooLong(true)
     }, 5000)
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
-      console.log('onAuthStateChange:', event, !!authSession)
       handled = true
       clearTimeout(slowTimeout)
       setLoadingTooLong(false)
 
-      // Token expiré ou invalide → vide le localStorage et affiche la page de connexion
+      // Lien de réinitialisation cliqué → affiche ResetPasswordPage
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsPasswordRecovery(true)
+        setLoading(false)
+        return
+      }
+
       if (event === 'TOKEN_REFRESHED' && !authSession) {
         localStorage.clear()
         setAuthUser(null)
@@ -135,14 +134,11 @@ export default function App() {
       await handleAuthSession(authSession, handlers)
     })
 
-    // Fallback : si onAuthStateChange ne se déclenche pas dans les 3s, appelle getSession manuellement
     const fallbackTimeout = setTimeout(async () => {
       if (handled) return
-      console.log('fallback getSession')
       try {
         const { data: { session: authSession }, error } = await supabase.auth.getSession()
         if (error) {
-          console.error('fallback getSession error:', error)
           localStorage.clear()
           setLoading(false)
           return
@@ -153,7 +149,6 @@ export default function App() {
         }
         await handleAuthSession(authSession, handlers)
       } catch (e) {
-        console.error('fallback error:', e)
         localStorage.clear()
         setLoading(false)
       }
@@ -166,9 +161,6 @@ export default function App() {
     }
   }, [])
 
-  /**
-   * Appelé quand le joueur rejoint ou crée une session live.
-   */
   const handleJoined = ({ session, player }) => {
     localStorage.setItem('poker_session', JSON.stringify({
       playerId: player.id,
@@ -181,9 +173,6 @@ export default function App() {
     setPlayer(player)
   }
 
-  /**
-   * Appelé quand le joueur quitte la session live.
-   */
   const handleLeave = () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -191,9 +180,6 @@ export default function App() {
     setPlayer(null)
   }
 
-  /**
-   * Appelé quand l'utilisateur se déconnecte complètement.
-   */
   const handleLogout = async () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -210,10 +196,6 @@ export default function App() {
     setMembership(memberData)
   }
 
-  /**
-   * Sélectionne un groupe depuis GroupSelectPage.
-   * Vide la session précédente pour aller au lobby.
-   */
   const handleSelectGroup = (m) => {
     localStorage.removeItem('poker_session')
     reset()
@@ -222,9 +204,6 @@ export default function App() {
     setMembership(m)
   }
 
-  /**
-   * Retourne à la sélection de groupe.
-   */
   const handleSwitchGroup = () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -233,10 +212,6 @@ export default function App() {
     setPlayer(null)
   }
 
-  /**
-   * Appelé quand l'utilisateur quitte un groupe.
-   * Retire le membership de la liste et retourne à GroupSelectPage ou GroupPage.
-   */
   const handleLeaveGroup = () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -283,9 +258,19 @@ export default function App() {
     )
   }
 
+  // Réinitialisation du mot de passe
+  if (isPasswordRecovery) {
+    return (
+      <ResetPasswordPage
+        onDone={() => {
+          setIsPasswordRecovery(false)
+        }}
+      />
+    )
+  }
+
   if (!authUser) return <LoginPage />
 
-  // Plusieurs groupes et aucun sélectionné → sélection
   if (authUser && memberships.length > 1 && !membership) {
     return (
       <GroupSelectPage
@@ -295,7 +280,6 @@ export default function App() {
     )
   }
 
-  // Aucun groupe → créer ou rejoindre
   if (!membership) return <GroupPage user={authUser} onGroupJoined={handleGroupJoined} />
 
   if (!session) return (
