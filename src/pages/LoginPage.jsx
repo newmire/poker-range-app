@@ -7,24 +7,21 @@
  *
  * Utilise Supabase Auth pour l'authentification.
  * Après inscription, un email de confirmation est envoyé.
+ * Appuyer sur Entrée dans n'importe quel champ soumet le formulaire.
  */
 
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 export default function LoginPage() {
-  const [mode, setMode] = useState('login')      // 'login' | 'register'
+  const [mode, setMode] = useState('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [username, setUsername] = useState('')   // Pseudo (inscription uniquement)
+  const [username, setUsername] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [message, setMessage] = useState(null)   // Message de succès
+  const [message, setMessage] = useState(null)
 
-  /**
-   * Connecte l'utilisateur avec email + mot de passe.
-   * Supabase Auth déclenche onAuthStateChange dans App.jsx.
-   */
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) return setError('Remplissez tous les champs')
     setLoading(true)
@@ -39,11 +36,6 @@ export default function LoginPage() {
     }
   }
 
-  /**
-   * Inscrit un nouvel utilisateur.
-   * Le pseudo est stocké dans les métadonnées Supabase Auth (app_metadata).
-   * Un email de confirmation est envoyé avant que le compte soit actif.
-   */
   const handleRegister = async () => {
     if (!email.trim() || !password.trim() || !username.trim()) return setError('Remplissez tous les champs')
     setLoading(true)
@@ -63,13 +55,19 @@ export default function LoginPage() {
     }
   }
 
+  /** Soumet le formulaire si l'utilisateur appuie sur Entrée */
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !loading) {
+      mode === 'login' ? handleLogin() : handleRegister()
+    }
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.card}>
         <h1 style={styles.title}>🃏 Poker Range</h1>
         <p style={styles.subtitle}>Outil de review collaborative</p>
 
-        {/* Toggle Connexion / Inscription */}
         <div style={styles.toggleRow}>
           <button
             style={{
@@ -95,13 +93,13 @@ export default function LoginPage() {
           </button>
         </div>
 
-        {/* Champ pseudo (inscription uniquement) */}
         {mode === 'register' && (
           <input
             style={styles.input}
             placeholder="Pseudo"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
+            onKeyDown={handleKeyDown}
           />
         )}
 
@@ -111,6 +109,7 @@ export default function LoginPage() {
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={handleKeyDown}
         />
 
         <input
@@ -119,6 +118,7 @@ export default function LoginPage() {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={handleKeyDown}
         />
 
         {error && <p style={styles.error}>{error}</p>}
