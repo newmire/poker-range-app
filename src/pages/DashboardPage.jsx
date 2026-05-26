@@ -1,5 +1,13 @@
 /**
  * DashboardPage.jsx — Page principale de la session live
+ *
+ * Gère :
+ * - L'affichage de la grille de range (reg/fish)
+ * - La liste des joueurs (master : navigation + broadcast / joueurs : lecture)
+ * - Le broadcast de la vue du master vers tous les joueurs via Realtime
+ * - La sauvegarde des ranges et du contexte
+ * - La modal de confirmation avant de quitter la session
+ * - Le marquage is_active=false à la sortie (trigger DB supprime la session si vide)
  */
 
 import { useEffect, useState } from 'react'
@@ -20,12 +28,17 @@ import {
   saveRangeToLibrary,
   updateLastSeen,
   getMembers,
+  leaveSession,
 } from '../lib/session'
 
 const POSITIONS = ['UTG', 'UTG+1', 'UTG+2', 'MP', 'HJ', 'CO', 'BTN', 'SB', 'BB']
 
 const isMasterFn = (session, player) => session?.master_id === player?.id
 
+/**
+ * Retourne la couleur de statut d'un membre selon son last_seen.
+ * Vert < 1min, Orange < 5min, Gris sinon.
+ */
 function getStatus(lastSeen) {
   if (!lastSeen) return { color: '#444' }
   const normalized = lastSeen.endsWith('Z') ? lastSeen : lastSeen + 'Z'
@@ -37,6 +50,7 @@ function getStatus(lastSeen) {
 
 // ─── Icônes œil SVG style Lucide ─────────────────────────────────────────────
 
+/** Œil ouvert — indique la vue broadcastée à tous */
 function EyeOpen({ color = '#22c55e' }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -46,6 +60,7 @@ function EyeOpen({ color = '#22c55e' }) {
   )
 }
 
+/** Œil fermé — vue non broadcastée */
 function EyeClosed({ color = '#444' }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -59,6 +74,7 @@ function EyeClosed({ color = '#444' }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage({ session, player, membership, authUser, onLeave, onLogout }) {
+  // ─── Store Zustand ──────────────────────────────────────────────────────────
   const clearMatrix = useRangeStore((state) => state.clearMatrix)
   const setPlayerId = useRangeStore((state) => state.setPlayerId)
   const setActivePlayerIdInStore = useRangeStore((state) => state.setActivePlayerId)
@@ -72,26 +88,34 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const setStackSizeSilent = useRangeStore((state) => state.setStackSizeSilent)
   const setVersusSilent = useRangeStore((state) => state.setVersusSilent)
 
+  // ─── State local ────────────────────────────────────────────────────────────
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [players, setPlayers] = useState([])
   const [members, setMembers] = useState([])
 
+  // ID du joueur affiché localement par le master (navigation sans broadcast)
   const [localViewedId, setLocalViewedId] = useState(player?.id ?? null)
   const [localViewedPlayer, setLocalViewedPlayer] = useState(null)
+
+  // ID du joueur broadcasté à tous via active_player_id en base
   const [broadcastedId, setBroadcastedId] = useState(null)
+
+  // Pour les non-masters : ID du joueur observé localement
   const [viewedPlayerId, setViewedPlayerId] = useState(null)
 
   const [activeGrid, setActiveGrid] = useState('reg')
   const [showSaveModal, setShowSaveModal] = useState(false)
   const [showLibrary, setShowLibrary] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false) // Modal confirmation quitter
   const [saveName, setSaveName] = useState('')
   const [saveShared, setSaveShared] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const master = isMasterFn(session, player)
 
-  // Heartbeat
+  // ─── Heartbeat ──────────────────────────────────────────────────────────────
+  // Met à jour last_seen toutes les 30s pour indiquer que l'utilisateur est actif
   useEffect(() => {
     if (!membership?.id) return
     updateLastSeen(membership.id)
@@ -99,7 +123,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => clearInterval(interval)
   }, [membership])
 
-  // Chargement des membres pour les statuts (master seulement)
+  // ─── Chargement des membres pour les statuts (master seulement) ─────────────
   useEffect(() => {
     if (!membership?.group_id || !master) return
     getMembers(membership.group_id).then(setMembers)
@@ -109,11 +133,12 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => clearInterval(interval)
   }, [membership, master])
 
+  // ─── Init playerId dans le store ────────────────────────────────────────────
   useEffect(() => {
     if (player?.id) setPlayerId(player.id)
   }, [player])
 
-  // Chargement initial des joueurs
+  // ─── Chargement initial des joueurs ─────────────────────────────────────────
   useEffect(() => {
     if (!session) return
     getPlayers(session.id).then((p) => {
@@ -127,12 +152,14 @@ export default function DashboardPage({ session, player, membership, authUser, o
     })
   }, [session])
 
-  // Realtime : changements des joueurs
+  // ─── Realtime : changements des joueurs ─────────────────────────────────────
+  // Recharge la liste à chaque UPDATE/INSERT/DELETE sur players
   useEffect(() => {
     if (!session) return
     const sub = subscribeToPlayers(session.id, (payload) => {
       getPlayers(session.id).then((updatedPlayers) => {
         setPlayers(updatedPlayers)
+        // Si le master observe ce joueur, on met à jour la grille
         if (master && payload.new?.id === localViewedId) {
           const updated = updatedPlayers.find((p) => p.id === payload.new.id)
           if (updated) {
@@ -150,7 +177,8 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => sub.unsubscribe()
   }, [session, master, localViewedId])
 
-  // Realtime : changement du joueur broadcasted
+  // ─── Realtime : changement du joueur broadcasted ────────────────────────────
+  // Écoute active_player_id sur la session pour synchroniser tous les joueurs
   useEffect(() => {
     if (!session) return
     const sub = subscribeToSession(session.id, (payload) => {
@@ -158,7 +186,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
       setBroadcastedId(newActiveId)
       if (!master) {
         if (newActiveId) {
-          // Broadcast actif : affiche la range imposée
+          // Broadcast actif : affiche la range imposée par le master
           const activePlayer = players.find((p) => p.id === newActiveId)
           if (activePlayer?.range_reg) setMatrix(activePlayer.range_reg)
           setViewedPlayerId(null)
@@ -173,18 +201,27 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => sub.unsubscribe()
   }, [session, player, players, master])
 
+  // ─── Resize ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768)
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  /** Retourne la couleur de statut d'un joueur via son username dans members */
   const getMemberStatus = (playerName) => {
     const member = members.find((m) => m.username === playerName)
     return member ? getStatus(member.last_seen) : { color: '#444' }
   }
 
-  // Master : navigation locale sans broadcast
+  // ─── Handlers master ────────────────────────────────────────────────────────
+
+  /**
+   * Navigation locale du master vers un joueur.
+   * Sauvegarde la range courante avant de changer, ne broadcase pas.
+   */
   const handleSelectPlayer = async (p) => {
     const { matrix, activePlayerId } = useRangeStore.getState()
     if (activePlayerId) await saveRange(activePlayerId, matrix, activeGrid)
@@ -206,7 +243,10 @@ export default function DashboardPage({ session, player, membership, authUser, o
     setActiveGrid(v)
   }
 
-  // Master : toggle broadcast via l'œil
+  /**
+   * Toggle broadcast via l'œil.
+   * Œil ouvert = vue imposée à tous / Œil fermé = pas de broadcast.
+   */
   const handleBroadcast = async (p) => {
     if (broadcastedId === p.id) {
       // Toggle off : stop le broadcast, chacun retrouve sa range
@@ -219,6 +259,10 @@ export default function DashboardPage({ session, player, membership, authUser, o
     }
   }
 
+  /**
+   * Switch entre grille Reg et Fish.
+   * Sauvegarde la grille courante avant de switcher.
+   */
   const handleSelectGrid = async (gridVersus) => {
     if (gridVersus === activeGrid) return
 
@@ -240,6 +284,9 @@ export default function DashboardPage({ session, player, membership, authUser, o
     if (activePlayerId) saveContext(activePlayerId, { position, stackSize, versus: gridVersus })
   }
 
+  /**
+   * Sauvegarde la range courante dans la bibliothèque.
+   */
   const handleSaveToLibrary = async () => {
     if (!saveName.trim()) return
     setSaving(true)
@@ -264,6 +311,9 @@ export default function DashboardPage({ session, player, membership, authUser, o
     }
   }
 
+  /**
+   * Charge une range depuis la bibliothèque dans la grille courante.
+   */
   const handleUseRange = (range) => {
     if (range.range?.length > 0) setMatrix(range.range)
     if (range.context?.position) setPositionSilent(range.context.position)
@@ -275,7 +325,28 @@ export default function DashboardPage({ session, player, membership, authUser, o
     setShowLibrary(false)
   }
 
-  // Non-master : observer la range d'un autre joueur localement
+  /**
+   * Quitte la session :
+   * - Sauvegarde la range courante
+   * - Marque le joueur comme inactif (is_active = false)
+   * - Le trigger DB supprime la session si tous les joueurs sont inactifs
+   * - Retourne au lobby sans supprimer poker_session du localStorage
+   *   (pour permettre de rejoindre si la session existe encore)
+   */
+  const handleConfirmLeave = async () => {
+    const { matrix, activePlayerId } = useRangeStore.getState()
+    if (activePlayerId) await saveRange(activePlayerId, matrix, activeGrid)
+    await leaveSession(player.id)
+    setShowLeaveConfirm(false)
+    onLeave()
+  }
+
+  // ─── Handler non-master ─────────────────────────────────────────────────────
+
+  /**
+   * Observation locale de la range d'un autre joueur (non-master).
+   * Clic sur le même joueur = retour à sa propre range.
+   */
   const handleViewPlayer = (p) => {
     if (p.id === viewedPlayerId) {
       setViewedPlayerId(null)
@@ -288,13 +359,16 @@ export default function DashboardPage({ session, player, membership, authUser, o
     if (range?.length > 0) setMatrix(range)
   }
 
+  // ─── Tri des joueurs : soi-même en premier ───────────────────────────────────
   const sortedPlayers = [
     ...players.filter((p) => p.id === player.id),
     ...players.filter((p) => p.id !== player.id),
   ]
 
+  // Desktop master → deux grilles côte à côte
   const showBothGrids = master && !isMobile
 
+  // ─── Render ─────────────────────────────────────────────────────────────────
   return (
     <div style={{
       minHeight: '100vh',
@@ -323,7 +397,8 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
           <h3 style={styles.title}>{master ? '👑 Master' : '🎮 Joueur'}</h3>
-          <button style={styles.leaveBtnSmall} onClick={onLeave}>✕</button>
+          {/* ✕ ouvre la modal de confirmation */}
+          <button style={styles.leaveBtnSmall} onClick={() => setShowLeaveConfirm(true)}>✕</button>
         </div>
 
         {session && (
@@ -503,6 +578,25 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
       <BottomActionBar />
 
+      {/* ── Modal confirmation quitter la session ── */}
+      {showLeaveConfirm && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
+            <h3 style={styles.modalTitle}>Quitter la session ?</h3>
+            <p style={styles.modalContext}>
+              Ta range sera sauvegardée. Tu pourras rejoindre si la session est encore active.
+            </p>
+            <button style={styles.btnPrimary} onClick={handleConfirmLeave}>
+              Quitter
+            </button>
+            <button style={styles.btnSecondary} onClick={() => setShowLeaveConfirm(false)}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal sauvegarde range ── */}
       {showSaveModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>

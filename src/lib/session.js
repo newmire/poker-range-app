@@ -32,7 +32,6 @@ export function generateCode() {
 export async function createSession(masterName, context, groupId) {
   const code = generateCode()
 
-  // Crée la session en base
   const { data: session, error: sessionError } = await supabase
     .from('sessions')
     .insert({ code, context, group_id: groupId })
@@ -40,7 +39,6 @@ export async function createSession(masterName, context, groupId) {
     .single()
   if (sessionError) throw sessionError
 
-  // Crée le joueur master
   const { data: player, error: playerError } = await supabase
     .from('players')
     .insert({ session_id: session.id, name: masterName, role: 'master' })
@@ -48,13 +46,11 @@ export async function createSession(masterName, context, groupId) {
     .single()
   if (playerError) throw playerError
 
-  // Met à jour le master_id sur la session
   await supabase
     .from('sessions')
     .update({ master_id: player.id })
     .eq('id', session.id)
 
-  // Relit la session avec le master_id à jour
   const { data: updatedSession, error: fetchError } = await supabase
     .from('sessions')
     .select()
@@ -126,7 +122,7 @@ export async function getPlayers(sessionId) {
  * Met à jour le joueur actif affiché sur la session (utilisé par le master).
  *
  * @param {string} sessionId
- * @param {string} playerId
+ * @param {string|null} playerId - null pour stopper le broadcast
  */
 export async function setActivePlayer(sessionId, playerId) {
   const { error } = await supabase
@@ -207,6 +203,7 @@ export async function getContext(playerId) {
 
 /**
  * Récupère la session active la plus récente d'un groupe.
+ * Retourne null si aucune session trouvée.
  *
  * @param {string} groupId
  * @returns {object|null} Session active ou null
@@ -335,7 +332,7 @@ export async function getMembers(groupId) {
 }
 
 /**
- * Retire un membre d'un groupe.
+ * Retire un membre d'un groupe (admin uniquement).
  *
  * @param {string} membershipId
  */
@@ -360,6 +357,7 @@ export async function updateLastSeen(membershipId) {
     .eq('id', membershipId)
   if (error) console.error('❌ erreur updateLastSeen', error)
 }
+
 /**
  * Quitte un groupe en supprimant le membership de l'utilisateur.
  *
@@ -371,4 +369,18 @@ export async function leaveGroup(membershipId) {
     .delete()
     .eq('id', membershipId)
   if (error) console.error('❌ erreur leaveGroup', error)
+}
+
+/**
+ * Marque un joueur comme inactif quand il quitte la session.
+ * Le trigger DB supprime automatiquement la session si tous les joueurs sont inactifs.
+ *
+ * @param {string} playerId
+ */
+export async function leaveSession(playerId) {
+  const { error } = await supabase
+    .from('players')
+    .update({ is_active: false })
+    .eq('id', playerId)
+  if (error) console.error('❌ erreur leaveSession', error)
 }
