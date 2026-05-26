@@ -17,9 +17,14 @@ import GroupSelectPage from './pages/GroupSelectPage'
 import { supabase } from './lib/supabase'
 import { useRangeStore } from './stores/rangeStore'
 
+/**
+ * Fonction extraite du composant pour éviter les problèmes de closure dans useEffect.
+ * Appelée à chaque changement d'état auth (connexion, reconnexion, rechargement).
+ */
 async function handleAuthSession(authSession, { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }) {
   setAuthUser(authSession.user)
 
+  // Récupère tous les memberships de l'utilisateur
   const { data: memberData } = await supabase
     .from('memberships')
     .select('*, groups(*)')
@@ -29,9 +34,11 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
   setMemberships(memberships)
 
   if (memberships.length === 1) {
+    // Un seul groupe → on le charge directement
     setMembership(memberships[0])
     await restoreSession(memberships[0], { setPlayer, setSession })
   } else if (memberships.length === 0) {
+    // Aucun groupe → affiche GroupPage
     setMembership(null)
   }
   // Si plusieurs groupes → GroupSelectPage (membership reste null)
@@ -39,6 +46,9 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
   setLoading(false)
 }
 
+/**
+ * Tente de reconnecter à une session live sauvegardée dans le localStorage.
+ */
 async function restoreSession(membership, { setPlayer, setSession }) {
   const saved = localStorage.getItem('poker_session')
   if (!saved) return
@@ -80,8 +90,8 @@ async function restoreSession(membership, { setPlayer, setSession }) {
 
 export default function App() {
   const [authUser, setAuthUser] = useState(null)
-  const [memberships, setMemberships] = useState([])
-  const [membership, setMembership] = useState(null)
+  const [memberships, setMemberships] = useState([])    // Tous les groupes de l'utilisateur
+  const [membership, setMembership] = useState(null)    // Groupe actif sélectionné
   const [session, setSession] = useState(null)
   const [player, setPlayer] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -92,6 +102,7 @@ export default function App() {
     const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }
     let handled = false
 
+    // Après 5 secondes, affiche le bouton "Réessayer"
     const slowTimeout = setTimeout(() => {
       setLoadingTooLong(true)
     }, 5000)
@@ -102,6 +113,7 @@ export default function App() {
       clearTimeout(slowTimeout)
       setLoadingTooLong(false)
 
+      // Token expiré ou invalide → vide le localStorage et affiche la page de connexion
       if (event === 'TOKEN_REFRESHED' && !authSession) {
         localStorage.clear()
         setAuthUser(null)
@@ -123,6 +135,7 @@ export default function App() {
       await handleAuthSession(authSession, handlers)
     })
 
+    // Fallback : si onAuthStateChange ne se déclenche pas dans les 3s, appelle getSession manuellement
     const fallbackTimeout = setTimeout(async () => {
       if (handled) return
       console.log('fallback getSession')
@@ -153,6 +166,9 @@ export default function App() {
     }
   }, [])
 
+  /**
+   * Appelé quand le joueur rejoint ou crée une session live.
+   */
   const handleJoined = ({ session, player }) => {
     localStorage.setItem('poker_session', JSON.stringify({
       playerId: player.id,
@@ -165,6 +181,9 @@ export default function App() {
     setPlayer(player)
   }
 
+  /**
+   * Appelé quand le joueur quitte la session live.
+   */
   const handleLeave = () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -172,6 +191,9 @@ export default function App() {
     setPlayer(null)
   }
 
+  /**
+   * Appelé quand l'utilisateur se déconnecte complètement.
+   */
   const handleLogout = async () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -188,7 +210,10 @@ export default function App() {
     setMembership(memberData)
   }
 
-  // Sélection d'un groupe — vide la session précédente pour aller au lobby
+  /**
+   * Sélectionne un groupe depuis GroupSelectPage.
+   * Vide la session précédente pour aller au lobby.
+   */
   const handleSelectGroup = (m) => {
     localStorage.removeItem('poker_session')
     reset()
@@ -197,9 +222,26 @@ export default function App() {
     setMembership(m)
   }
 
+  /**
+   * Retourne à la sélection de groupe.
+   */
   const handleSwitchGroup = () => {
     localStorage.removeItem('poker_session')
     reset()
+    setMembership(null)
+    setSession(null)
+    setPlayer(null)
+  }
+
+  /**
+   * Appelé quand l'utilisateur quitte un groupe.
+   * Retire le membership de la liste et retourne à GroupSelectPage ou GroupPage.
+   */
+  const handleLeaveGroup = () => {
+    localStorage.removeItem('poker_session')
+    reset()
+    const remaining = memberships.filter((m) => m.id !== membership.id)
+    setMemberships(remaining)
     setMembership(null)
     setSession(null)
     setPlayer(null)
@@ -243,6 +285,7 @@ export default function App() {
 
   if (!authUser) return <LoginPage />
 
+  // Plusieurs groupes et aucun sélectionné → sélection
   if (authUser && memberships.length > 1 && !membership) {
     return (
       <GroupSelectPage
@@ -252,6 +295,7 @@ export default function App() {
     )
   }
 
+  // Aucun groupe → créer ou rejoindre
   if (!membership) return <GroupPage user={authUser} onGroupJoined={handleGroupJoined} />
 
   if (!session) return (
@@ -260,6 +304,8 @@ export default function App() {
       onJoined={handleJoined}
       onLogout={handleLogout}
       onSwitchGroup={memberships.length > 1 ? handleSwitchGroup : null}
+      onLeaveGroup={handleLeaveGroup}
+      authUser={authUser}
     />
   )
 

@@ -7,6 +7,8 @@
  * - Les boutons pour créer/rejoindre une session (selon le rôle)
  * - L'accès à la bibliothèque de ranges et à la gestion des membres
  * - Bouton "Changer de groupe" si l'utilisateur appartient à plusieurs groupes
+ * - Bouton "Rejoindre / Créer un groupe" pour rejoindre un nouveau groupe
+ * - Bouton "Quitter le groupe" pour les joueurs (pas le master)
  */
 
 import { useState, useEffect } from 'react'
@@ -16,24 +18,28 @@ import {
   getActiveSession,
   subscribeToGroupSessions,
   updateLastSeen,
+  leaveGroup,
 } from '../lib/session'
 import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
+import GroupPage from './GroupPage'
 
-export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGroup }) {
-  const [mode, setMode] = useState(null)
-  const [code, setCode] = useState('')
+export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGroup, onLeaveGroup, authUser }) {
+  const [mode, setMode] = useState(null)               // null | 'join'
+  const [code, setCode] = useState('')                 // Code de session saisi manuellement
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [activeSession, setActiveSession] = useState(null)
+  const [activeSession, setActiveSession] = useState(null) // Session active du groupe
   const [showLibrary, setShowLibrary] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
+  const [showGroupModal, setShowGroupModal] = useState(false)     // Modal rejoindre/créer groupe
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false) // Modal confirmation quitter groupe
 
   const username = membership.username
   const groupId = membership.group_id
   const isMaster = membership.role === 'master'
 
-  // Heartbeat
+  // ─── Heartbeat ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!membership?.id) return
     updateLastSeen(membership.id)
@@ -41,7 +47,8 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     return () => clearInterval(interval)
   }, [membership])
 
-  // Détection automatique de la session active
+  // ─── Détection automatique de la session active ───────────────────────────
+  // Charge la session active au montage puis écoute les nouvelles sessions en Realtime
   useEffect(() => {
     if (!groupId) return
     getActiveSession(groupId).then(setActiveSession)
@@ -51,6 +58,9 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     return () => sub.unsubscribe()
   }, [groupId])
 
+  /**
+   * Crée une nouvelle session (master uniquement).
+   */
   const handleCreate = async () => {
     setLoading(true)
     setError(null)
@@ -64,6 +74,11 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     }
   }
 
+  /**
+   * Rejoint une session via son code.
+   * Si sessionCode est fourni, l'utilise directement (session active détectée).
+   * Sinon, utilise le code saisi manuellement.
+   */
   const handleJoin = async (sessionCode) => {
     setLoading(true)
     setError(null)
@@ -77,17 +92,29 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     }
   }
 
+  /**
+   * Quitte le groupe après confirmation.
+   * Supprime le membership de l'utilisateur et remonte l'événement à App.jsx.
+   */
+  const handleLeaveGroup = async () => {
+    await leaveGroup(membership.id)
+    setShowLeaveConfirm(false)
+    onLeaveGroup()
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.card}>
         <h1 style={styles.title}>🃏 Poker Range</h1>
 
+        {/* Infos du groupe et du membre */}
         <div style={styles.groupInfo}>
           <span style={styles.groupName}>👥 {membership.groups?.name}</span>
           <span style={styles.username}>{username}</span>
           {isMaster && <span style={styles.masterBadge}>👑 Master</span>}
         </div>
 
+        {/* Session active détectée automatiquement (joueurs uniquement) */}
         {activeSession && !mode && !isMaster && (
           <div style={styles.activeSessionBox}>
             <p style={styles.activeSessionLabel}>Session en cours</p>
@@ -102,13 +129,16 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
           </div>
         )}
 
+        {/* Boutons principaux */}
         {!mode && (
           <div style={styles.buttons}>
+            {/* Créer une session (master uniquement) */}
             {isMaster && (
               <button style={styles.btnPrimary} onClick={handleCreate} disabled={loading}>
                 {loading ? 'Création...' : 'Créer une session'}
               </button>
             )}
+            {/* Rejoindre manuellement (joueurs sans session active) */}
             {!activeSession && !isMaster && (
               <button style={styles.btnSecondary} onClick={() => setMode('join')}>
                 Rejoindre avec un code
@@ -117,19 +147,32 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
             <button style={styles.btnLibrary} onClick={() => setShowLibrary(true)}>
               📚 Bibliothèque
             </button>
+            {/* Gestion des membres (master uniquement) */}
             {isMaster && (
               <button style={styles.btnMembers} onClick={() => setShowMembers(true)}>
                 👥 Membres
               </button>
             )}
+            {/* Changer de groupe (si plusieurs groupes) */}
             {onSwitchGroup && (
               <button style={styles.btnSwitch} onClick={onSwitchGroup}>
                 🔄 Changer de groupe
               </button>
             )}
+            {/* Rejoindre ou créer un nouveau groupe */}
+            <button style={styles.btnNewGroup} onClick={() => setShowGroupModal(true)}>
+              ➕ Rejoindre / Créer un groupe
+            </button>
+            {/* Quitter le groupe (joueurs uniquement, pas le master) */}
+            {!isMaster && (
+              <button style={styles.btnLeave} onClick={() => setShowLeaveConfirm(true)}>
+                🚪 Quitter le groupe
+              </button>
+            )}
           </div>
         )}
 
+        {/* Formulaire de saisie manuelle du code */}
         {mode === 'join' && (
           <div style={styles.form}>
             <input
@@ -151,6 +194,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
 
         {!mode && error && <p style={styles.error}>{error}</p>}
 
+        {/* Code d'invitation du groupe (master uniquement) */}
         {isMaster && membership.groups?.invite_code && (
           <div style={styles.inviteBox}>
             <p style={styles.inviteLabel}>Code d'invitation du groupe</p>
@@ -163,6 +207,47 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
         </button>
       </div>
 
+      {/* ─── Modal confirmation quitter le groupe ──────────────────────────── */}
+      {showLeaveConfirm && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
+            <h3 style={styles.modalTitle}>🚪 Quitter le groupe</h3>
+            <p style={styles.modalText}>
+              Tu vas quitter <strong style={{ color: 'white' }}>{membership.groups?.name}</strong>.
+              Tes ranges personnelles seront supprimées. Tu pourras rejoindre à nouveau avec le code d'invitation.
+            </p>
+            <button style={styles.btnDanger} onClick={handleLeaveGroup}>
+              Confirmer
+            </button>
+            <button style={styles.btnSecondary} onClick={() => setShowLeaveConfirm(false)}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Modal rejoindre / créer un groupe ────────────────────────────── */}
+      {showGroupModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+              <h3 style={styles.modalTitle}>Groupe</h3>
+              <button style={styles.closeBtn} onClick={() => setShowGroupModal(false)}>✕</button>
+            </div>
+            <GroupPage
+              user={authUser}
+              onGroupJoined={(memberData) => {
+                setShowGroupModal(false)
+                // Recharge l'app pour prendre en compte le nouveau groupe
+                if (onSwitchGroup) onSwitchGroup()
+              }}
+              inline
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Bibliothèque de ranges */}
       {showLibrary && (
         <LibraryPage
           membership={membership}
@@ -171,6 +256,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
         />
       )}
 
+      {/* Page membres */}
       {showMembers && (
         <MembersPage
           membership={membership}
@@ -197,6 +283,9 @@ const styles = {
   btnLibrary: { padding: '12px', borderRadius: '8px', border: '1px solid #8b5cf6', backgroundColor: 'transparent', color: '#8b5cf6', fontSize: '14px', cursor: 'pointer', width: '100%' },
   btnMembers: { padding: '12px', borderRadius: '8px', border: '1px solid #f59e0b', backgroundColor: 'transparent', color: '#f59e0b', fontSize: '14px', cursor: 'pointer', width: '100%' },
   btnSwitch: { padding: '12px', borderRadius: '8px', border: '1px solid #38bdf8', backgroundColor: 'transparent', color: '#38bdf8', fontSize: '14px', cursor: 'pointer', width: '100%' },
+  btnNewGroup: { padding: '12px', borderRadius: '8px', border: '1px solid #22c55e', backgroundColor: 'transparent', color: '#22c55e', fontSize: '14px', cursor: 'pointer', width: '100%' },
+  btnLeave: { padding: '12px', borderRadius: '8px', border: '1px solid #ef4444', backgroundColor: 'transparent', color: '#ef4444', fontSize: '14px', cursor: 'pointer', width: '100%' },
+  btnDanger: { padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: '#ef4444', color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', width: '100%' },
   activeSessionBox: { width: '100%', backgroundColor: '#1a1a1a', borderRadius: '8px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', border: '1px solid #22c55e' },
   activeSessionLabel: { color: '#666', fontSize: '11px', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' },
   activeSessionCode: { color: '#22c55e', fontSize: '20px', fontWeight: 'bold', letterSpacing: '0.1em' },
@@ -204,5 +293,10 @@ const styles = {
   inviteLabel: { color: '#666', fontSize: '11px', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' },
   inviteCode: { color: '#f59e0b', fontSize: '20px', fontWeight: 'bold', letterSpacing: '0.1em' },
   logoutBtn: { padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: '#444', fontSize: '12px', cursor: 'pointer', marginTop: '8px' },
+  modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300, padding: '16px' },
+  modal: { backgroundColor: '#111', border: '1px solid #222', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '360px', display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' },
+  modalTitle: { color: 'white', fontSize: '16px', margin: 0 },
+  modalText: { color: '#888', fontSize: '13px', margin: 0, textAlign: 'center', lineHeight: '1.5' },
+  closeBtn: { background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '18px' },
   error: { color: '#ef4444', fontSize: '13px', margin: 0 },
 }

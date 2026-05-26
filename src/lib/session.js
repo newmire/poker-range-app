@@ -360,3 +360,15 @@ export async function updateLastSeen(membershipId) {
     .eq('id', membershipId)
   if (error) console.error('❌ erreur updateLastSeen', error)
 }
+/**
+ * Quitte un groupe en supprimant le membership de l'utilisateur.
+ *
+ * @param {string} membershipId
+ */
+export async function leaveGroup(membershipId) {
+  const { error } = await supabase
+    .from('memberships')
+    .delete()
+    .eq('id', membershipId)
+  if (error) console.error('❌ erreur leaveGroup', error)
+}
