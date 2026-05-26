@@ -11,6 +11,7 @@
  * - Bouton "Quitter le groupe" pour les joueurs (pas le master)
  * - Copier le code de session en un clic (bouton 📋)
  * - Copier le code d'invitation du groupe en un clic
+ * - Partage natif mobile du code d'invitation (bouton 📤)
  */
 
 import { useState, useEffect } from 'react'
@@ -36,10 +37,11 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   const [showMembers, setShowMembers] = useState(false)
   const [showGroupModal, setShowGroupModal] = useState(false)
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
-
-  // États pour le feedback de copie
   const [copiedSession, setCopiedSession] = useState(false)
   const [copiedInvite, setCopiedInvite] = useState(false)
+
+  // Vérifie si le partage natif est disponible (mobile uniquement)
+  const canShare = typeof navigator !== 'undefined' && !!navigator.share
 
   const username = membership.username
   const groupId = membership.group_id
@@ -95,10 +97,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     onLeaveGroup()
   }
 
-  /**
-   * Copie le code de session dans le presse-papier.
-   * Affiche un feedback visuel ✓ pendant 1.5s.
-   */
+  /** Copie le code de session dans le presse-papier */
   const handleCopySessionCode = () => {
     if (!activeSession?.code) return
     navigator.clipboard.writeText(activeSession.code)
@@ -106,15 +105,30 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     setTimeout(() => setCopiedSession(false), 1500)
   }
 
-  /**
-   * Copie le code d'invitation du groupe dans le presse-papier.
-   * Affiche un feedback visuel ✓ pendant 1.5s.
-   */
+  /** Copie le code d'invitation du groupe dans le presse-papier */
   const handleCopyInviteCode = () => {
     if (!membership.groups?.invite_code) return
     navigator.clipboard.writeText(membership.groups.invite_code)
     setCopiedInvite(true)
     setTimeout(() => setCopiedInvite(false), 1500)
+  }
+
+  /**
+   * Partage natif mobile du code d'invitation.
+   * Ouvre le menu de partage système (WhatsApp, SMS, etc.)
+   * Disponible uniquement sur mobile via navigator.share().
+   */
+  const handleShareInvite = async () => {
+    if (!canShare) return
+    try {
+      await navigator.share({
+        title: 'Poker Range — Rejoins mon groupe',
+        text: `Rejoins mon groupe "${membership.groups?.name}" sur Poker Range !\nCode d'invitation : ${membership.groups?.invite_code}`,
+      })
+    } catch (e) {
+      // L'utilisateur a annulé le partage, pas d'erreur à afficher
+      if (e.name !== 'AbortError') console.error('erreur partage:', e)
+    }
   }
 
   return (
@@ -135,15 +149,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={styles.activeSessionCode}>#{activeSession.code}</span>
               <button
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: copiedSession ? '#22c55e' : '#666',
-                  fontSize: '16px',
-                  padding: '2px',
-                  transition: 'color 0.2s',
-                }}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: copiedSession ? '#22c55e' : '#666', fontSize: '16px', padding: '2px', transition: 'color 0.2s' }}
                 onClick={handleCopySessionCode}
                 title="Copier le code"
               >
@@ -217,27 +223,29 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
 
         {!mode && error && <p style={styles.error}>{error}</p>}
 
-        {/* Code d'invitation du groupe avec bouton copier */}
+        {/* Code d'invitation avec copier + partage natif */}
         {isMaster && membership.groups?.invite_code && (
           <div style={styles.inviteBox}>
             <p style={styles.inviteLabel}>Code d'invitation du groupe</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={styles.inviteCode}>{membership.groups.invite_code}</span>
               <button
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: copiedInvite ? '#22c55e' : '#666',
-                  fontSize: '16px',
-                  padding: '2px',
-                  transition: 'color 0.2s',
-                }}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: copiedInvite ? '#22c55e' : '#666', fontSize: '16px', padding: '2px', transition: 'color 0.2s' }}
                 onClick={handleCopyInviteCode}
                 title="Copier le code d'invitation"
               >
                 {copiedInvite ? '✓' : '📋'}
               </button>
+              {/* Bouton partage natif — visible uniquement sur mobile */}
+              {canShare && (
+                <button
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#666', fontSize: '16px', padding: '2px' }}
+                  onClick={handleShareInvite}
+                  title="Partager le code d'invitation"
+                >
+                  📤
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -256,12 +264,8 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
               Tu vas quitter <strong style={{ color: 'white' }}>{membership.groups?.name}</strong>.
               Tes ranges personnelles seront supprimées. Tu pourras rejoindre à nouveau avec le code d'invitation.
             </p>
-            <button style={styles.btnDanger} onClick={handleLeaveGroup}>
-              Confirmer
-            </button>
-            <button style={styles.btnSecondary} onClick={() => setShowLeaveConfirm(false)}>
-              Annuler
-            </button>
+            <button style={styles.btnDanger} onClick={handleLeaveGroup}>Confirmer</button>
+            <button style={styles.btnSecondary} onClick={() => setShowLeaveConfirm(false)}>Annuler</button>
           </div>
         </div>
       )}
@@ -287,18 +291,11 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       )}
 
       {showLibrary && (
-        <LibraryPage
-          membership={membership}
-          onClose={() => setShowLibrary(false)}
-          onUseRange={null}
-        />
+        <LibraryPage membership={membership} onClose={() => setShowLibrary(false)} onUseRange={null} />
       )}
 
       {showMembers && (
-        <MembersPage
-          membership={membership}
-          onClose={() => setShowMembers(false)}
-        />
+        <MembersPage membership={membership} onClose={() => setShowMembers(false)} />
       )}
     </div>
   )
