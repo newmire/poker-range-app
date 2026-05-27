@@ -22,6 +22,10 @@ import { useRangeStore } from './stores/rangeStore'
 
 const LOCAL_USER_KEY = 'poker_user'
 
+/**
+ * Sauvegarde les infos utilisateur dans le localStorage.
+ * Inclut les memberships avec leurs groupes imbriqués pour un chargement instantané au refresh.
+ */
 function saveUserToLocal(user, memberships) {
   localStorage.setItem(LOCAL_USER_KEY, JSON.stringify({
     id: user.id,
@@ -31,6 +35,10 @@ function saveUserToLocal(user, memberships) {
   }))
 }
 
+/**
+ * Relit les infos utilisateur depuis le localStorage.
+ * Retourne null si rien n'est stocké ou si les données sont invalides.
+ */
 function loadUserFromLocal() {
   try {
     const raw = localStorage.getItem(LOCAL_USER_KEY)
@@ -40,6 +48,11 @@ function loadUserFromLocal() {
   }
 }
 
+/**
+ * Gère une session Supabase authentifiée.
+ * Récupère les memberships depuis la DB, met à jour le cache local,
+ * et initialise le routing selon le nombre de groupes.
+ */
 async function handleAuthSession(authSession, { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }) {
   setAuthUser(authSession.user)
 
@@ -52,18 +65,27 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
   const memberships = Array.isArray(memberData) ? memberData : []
   setMemberships(memberships)
 
+  // Sauvegarde dans le localStorage avec la structure complète groups imbriquée
+  // pour permettre un chargement instantané au prochain refresh
   saveUserToLocal(authSession.user, memberships)
 
   if (memberships.length === 1) {
+    // Un seul groupe → on le charge directement
     setMembership(memberships[0])
     await restoreSession(memberships[0], { setPlayer, setSession })
   } else if (memberships.length === 0) {
+    // Aucun groupe → affiche GroupPage
     setMembership(null)
   }
+  // Si plusieurs groupes → GroupSelectPage s'affiche (membership reste null)
 
   setLoading(false)
 }
 
+/**
+ * Tente de reconnecter à une session live sauvegardée dans le localStorage.
+ * Si le joueur ou la session n'existe plus en base, nettoie le localStorage.
+ */
 async function restoreSession(membership, { setPlayer, setSession }) {
   const saved = localStorage.getItem('poker_session')
   if (!saved) return
@@ -87,6 +109,7 @@ async function restoreSession(membership, { setPlayer, setSession }) {
       setPlayer(playerData)
       setSession(sessionData)
 
+      // Restaure l'état de la grille depuis les données du joueur
       const { setPlayerId, setMatrix, setPositionSilent, setStackSizeSilent, setVersusSilent } = useRangeStore.getState()
       setPlayerId(playerData.id)
       const versus = playerData.context?.versus ?? 'reg'
@@ -105,12 +128,12 @@ async function restoreSession(membership, { setPlayer, setSession }) {
 
 export default function App() {
   const [authUser, setAuthUser] = useState(null)
-  const [memberships, setMemberships] = useState([])
-  const [membership, setMembership] = useState(null)
+  const [memberships, setMemberships] = useState([])  // Tous les groupes de l'utilisateur
+  const [membership, setMembership] = useState(null)  // Groupe actif sélectionné
   const [session, setSession] = useState(null)
   const [player, setPlayer] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [authError, setAuthError] = useState(null)
+  const [authError, setAuthError] = useState(null)    // Erreur réseau affichée à l'écran
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
 
   const reset = useRangeStore((state) => state.reset)
@@ -119,6 +142,8 @@ export default function App() {
     const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }
 
     // ─── Détection d'un lien de recovery dans l'URL ──────────────────────────
+    // Quand l'utilisateur clique le lien de réinitialisation, Supabase redirige
+    // vers l'app avec #access_token=...&type=recovery dans l'URL.
     const hash = window.location.hash
     if (hash.includes('type=recovery')) {
       setIsPasswordRecovery(true)
@@ -127,11 +152,14 @@ export default function App() {
     }
 
     // ─── Timeout absolu ──────────────────────────────────────────────────────
+    // Évite le chargement infini si Supabase ne répond jamais
     const absoluteTimeout = setTimeout(() => {
       setLoading(false)
     }, 8000)
 
     // ─── Chargement depuis le localStorage ───────────────────────────────────
+    // On charge uniquement si les memberships ont la structure groups imbriquée.
+    // Si les données du cache sont incomplètes, on attend Supabase.
     const cached = loadUserFromLocal()
     if (cached) {
       const validMemberships = (cached.memberships ?? []).filter(m => m?.groups)
@@ -144,21 +172,26 @@ export default function App() {
         clearTimeout(absoluteTimeout)
         setLoading(false)
       }
+      // Si pas de memberships valides → on reste en loading et attend Supabase
     }
 
     // ─── Vérification Supabase en arrière-plan ───────────────────────────────
+    // Même si le cache a été chargé, on vérifie que le token est toujours valide
+    // et on met à jour les données silencieusement
     let handled = false
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
       handled = true
       clearTimeout(absoluteTimeout)
 
+      // Lien de réinitialisation cliqué → affiche ResetPasswordPage
       if (event === 'PASSWORD_RECOVERY') {
         setIsPasswordRecovery(true)
         setLoading(false)
         return
       }
 
+      // Token expiré et non renouvelable → déconnexion propre
       if (event === 'TOKEN_REFRESHED' && !authSession) {
         localStorage.removeItem(LOCAL_USER_KEY)
         localStorage.removeItem('poker_session')
@@ -171,6 +204,7 @@ export default function App() {
         return
       }
 
+      // Pas de session → déconnexion
       if (!authSession) {
         localStorage.removeItem(LOCAL_USER_KEY)
         localStorage.removeItem('poker_session')
@@ -185,12 +219,15 @@ export default function App() {
     })
 
     // ─── Fallback getSession après 3s si onAuthStateChange muet ─────────────
+    // Sur certains navigateurs/réseaux, onAuthStateChange ne se déclenche pas.
+    // Ce fallback appelle getSession manuellement après 3 secondes.
     const fallbackTimeout = setTimeout(async () => {
       if (handled) return
       handled = true
       try {
         const { data: { session: authSession }, error } = await supabase.auth.getSession()
         if (error || !authSession) {
+          // Pas de session valide → page de connexion si pas de cache
           if (!cached) {
             localStorage.removeItem(LOCAL_USER_KEY)
             setAuthUser(null)
@@ -202,6 +239,7 @@ export default function App() {
         }
         await handleAuthSession(authSession, handlers)
       } catch (e) {
+        // Erreur réseau → message d'erreur si pas de cache
         if (!cached) {
           setAuthError('Impossible de se connecter. Vérifiez votre connexion réseau.')
           setLoading(false)
@@ -216,6 +254,10 @@ export default function App() {
     }
   }, [])
 
+  /**
+   * Appelé quand le joueur rejoint ou crée une session live.
+   * Sauvegarde la session dans le localStorage pour la reconnexion automatique.
+   */
   const handleJoined = ({ session, player }) => {
     localStorage.setItem('poker_session', JSON.stringify({
       playerId: player.id,
@@ -228,6 +270,10 @@ export default function App() {
     setPlayer(player)
   }
 
+  /**
+   * Appelé quand le joueur quitte la session live.
+   * Ne supprime pas poker_session pour permettre de rejoindre si la session existe encore.
+   */
   const handleLeave = () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -235,6 +281,9 @@ export default function App() {
     setPlayer(null)
   }
 
+  /**
+   * Déconnexion complète — supprime tous les caches et la session Supabase.
+   */
   const handleLogout = async () => {
     localStorage.removeItem('poker_session')
     localStorage.removeItem(LOCAL_USER_KEY)
@@ -247,6 +296,10 @@ export default function App() {
     setPlayer(null)
   }
 
+  /**
+   * Appelé quand l'utilisateur crée ou rejoint un nouveau groupe.
+   * Met à jour le cache local avec le nouveau membership.
+   */
   const handleGroupJoined = (memberData) => {
     const cached = loadUserFromLocal()
     if (cached) {
@@ -259,6 +312,10 @@ export default function App() {
     setMembership(memberData)
   }
 
+  /**
+   * Sélectionne un groupe depuis GroupSelectPage.
+   * Vide la session précédente pour aller au lobby du groupe sélectionné.
+   */
   const handleSelectGroup = (m) => {
     localStorage.removeItem('poker_session')
     reset()
@@ -267,6 +324,10 @@ export default function App() {
     setMembership(m)
   }
 
+  /**
+   * Retourne à la sélection de groupe.
+   * Disponible uniquement si l'utilisateur appartient à plusieurs groupes.
+   */
   const handleSwitchGroup = () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -275,6 +336,9 @@ export default function App() {
     setPlayer(null)
   }
 
+  /**
+   * Quitte un groupe — supprime le membership de la liste locale et du cache.
+   */
   const handleLeaveGroup = () => {
     localStorage.removeItem('poker_session')
     reset()
@@ -292,7 +356,17 @@ export default function App() {
     setPlayer(null)
   }
 
-  if (loading) {
+  // ─── Écran de chargement ─────────────────────────────────────────────────
+  // Affiché si :
+  // - Première visite (pas de cache)
+  // - Cache sans memberships valides (en attente de Supabase)
+  // - authUser chargé depuis le cache mais memberships pas encore disponibles
+
+  // Si on a un authUser mais pas de memberships, on attend Supabase
+  // pour éviter d'afficher GroupPage par erreur
+  const waitingForMemberships = authUser && memberships.length === 0 && loadUserFromLocal() !== null
+
+  if (loading || waitingForMemberships) {
     return (
       <div style={{
         minHeight: '100vh',
@@ -330,6 +404,7 @@ export default function App() {
     )
   }
 
+  // ─── Réinitialisation du mot de passe ────────────────────────────────────
   if (isPasswordRecovery) {
     return (
       <ResetPasswordPage
@@ -341,8 +416,12 @@ export default function App() {
     )
   }
 
+  // ─── Routing principal ───────────────────────────────────────────────────
+
+  // Pas connecté → page de connexion
   if (!authUser) return <LoginPage />
 
+  // Plusieurs groupes et aucun sélectionné → sélection de groupe
   if (authUser && memberships.length > 1 && !membership) {
     return (
       <GroupSelectPage
@@ -353,8 +432,10 @@ export default function App() {
     )
   }
 
+  // Aucun groupe → créer ou rejoindre un groupe
   if (!membership) return <GroupPage user={authUser} onGroupJoined={handleGroupJoined} />
 
+  // Pas de session live → lobby
   if (!session) return (
     <LobbyPage
       membership={membership}
@@ -366,6 +447,7 @@ export default function App() {
     />
   )
 
+  // Session live active → dashboard
   return (
     <DashboardPage
       session={session}
