@@ -1,8 +1,5 @@
 /**
  * GroupSelectPage.jsx — Sélection du groupe actif
- *
- * Affichée quand un utilisateur appartient à plusieurs groupes.
- * Permet de choisir dans quel groupe se connecter ou d'en rejoindre/créer un nouveau.
  */
 
 import { useState } from 'react'
@@ -11,6 +8,17 @@ import { supabase } from '../lib/supabase'
 
 export default function GroupSelectPage({ memberships, onSelect, authUser }) {
   const [showGroupModal, setShowGroupModal] = useState(false)
+  const [realUser, setRealUser] = useState(null)
+
+  /**
+   * Ouvre le modal en récupérant le vrai user Supabase
+   * pour garantir que le token est valide pour les requêtes DB
+   */
+  const handleOpenGroupModal = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    setRealUser(user ?? authUser)
+    setShowGroupModal(true)
+  }
 
   const handleGroupJoined = (memberData) => {
     setShowGroupModal(false)
@@ -36,10 +44,9 @@ export default function GroupSelectPage({ memberships, onSelect, authUser }) {
             </button>
           ))}
 
-          {/* Bouton rejoindre / créer un groupe */}
           <button
             style={styles.newGroupBtn}
-            onClick={() => setShowGroupModal(true)}
+            onClick={handleOpenGroupModal}
           >
             <span style={styles.newGroupName}>➕ Rejoindre / Créer un groupe</span>
           </button>
@@ -53,8 +60,7 @@ export default function GroupSelectPage({ memberships, onSelect, authUser }) {
         </button>
       </div>
 
-      {/* Modal rejoindre / créer un groupe */}
-      {showGroupModal && (
+      {showGroupModal && realUser && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
@@ -62,7 +68,7 @@ export default function GroupSelectPage({ memberships, onSelect, authUser }) {
               <button style={styles.closeBtn} onClick={() => setShowGroupModal(false)}>✕</button>
             </div>
             <GroupPage
-              user={authUser}
+              user={realUser}
               onGroupJoined={handleGroupJoined}
               inline
             />
