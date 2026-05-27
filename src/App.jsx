@@ -48,7 +48,8 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
     .select('*, groups(*)')
     .eq('user_id', authSession.user.id)
 
-  const memberships = memberData ?? []
+  // Protection contre null/undefined — s'assure que memberships est toujours un tableau
+  const memberships = Array.isArray(memberData) ? memberData : []
   setMemberships(memberships)
 
   saveUserToLocal(authSession.user, memberships)
@@ -126,14 +127,11 @@ export default function App() {
     }
 
     // ─── Timeout absolu ──────────────────────────────────────────────────────
-    // Évite le chargement infini si Supabase ne répond jamais
     const absoluteTimeout = setTimeout(() => {
       setLoading(false)
     }, 8000)
 
     // ─── Chargement depuis le localStorage ───────────────────────────────────
-    // On charge uniquement si les memberships ont la structure groups imbriquée
-    // Sinon on attend Supabase pour avoir des données complètes et valides
     const cached = loadUserFromLocal()
     if (cached) {
       const validMemberships = (cached.memberships ?? []).filter(m => m?.groups)
@@ -146,8 +144,6 @@ export default function App() {
         clearTimeout(absoluteTimeout)
         setLoading(false)
       }
-      // Si pas de memberships valides → on reste en loading
-      // et on attend que Supabase réponde via onAuthStateChange ou fallback
     }
 
     // ─── Vérification Supabase en arrière-plan ───────────────────────────────
