@@ -96,9 +96,6 @@ export default function App() {
     let handled = false
 
     // ─── Détection immédiate d'un lien de recovery dans l'URL ───────────────
-    // Quand l'utilisateur clique le lien de réinitialisation, Supabase redirige
-    // vers l'app avec #access_token=...&type=recovery dans l'URL.
-    // On détecte ça avant tout pour éviter le chargement infini.
     const hash = window.location.hash
     if (hash.includes('type=recovery')) {
       setIsPasswordRecovery(true)
@@ -106,16 +103,17 @@ export default function App() {
       return
     }
 
+    // Après 15s affiche le bouton "Réessayer" — délai volontairement long
+    // pour éviter les faux positifs sur réseau lent
     const slowTimeout = setTimeout(() => {
       setLoadingTooLong(true)
-    }, 5000)
+    }, 15000)
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
       handled = true
       clearTimeout(slowTimeout)
       setLoadingTooLong(false)
 
-      // Event PASSWORD_RECOVERY — lien cliqué mais hash pas encore dans l'URL
       if (event === 'PASSWORD_RECOVERY') {
         setIsPasswordRecovery(true)
         setLoading(false)
@@ -143,8 +141,13 @@ export default function App() {
       await handleAuthSession(authSession, handlers)
     })
 
+    // Fallback : si onAuthStateChange ne se déclenche pas dans les 3s,
+    // appelle getSession manuellement.
+    // handled = true empêche la double exécution si onAuthStateChange
+    // se déclenche entre-temps.
     const fallbackTimeout = setTimeout(async () => {
       if (handled) return
+      handled = true
       try {
         const { data: { session: authSession }, error } = await supabase.auth.getSession()
         if (error) {
@@ -267,13 +270,11 @@ export default function App() {
     )
   }
 
-  // Réinitialisation du mot de passe
   if (isPasswordRecovery) {
     return (
       <ResetPasswordPage
         onDone={() => {
           setIsPasswordRecovery(false)
-          // Nettoie le hash de l'URL après reset
           window.history.replaceState(null, '', window.location.pathname)
         }}
       />
