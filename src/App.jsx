@@ -22,10 +22,6 @@ import { useRangeStore } from './stores/rangeStore'
 
 const LOCAL_USER_KEY = 'poker_user'
 
-/**
- * Sauvegarde les infos utilisateur dans le localStorage.
- * Inclut les memberships avec leurs groupes imbriqués.
- */
 function saveUserToLocal(user, memberships) {
   localStorage.setItem(LOCAL_USER_KEY, JSON.stringify({
     id: user.id,
@@ -35,10 +31,6 @@ function saveUserToLocal(user, memberships) {
   }))
 }
 
-/**
- * Relit les infos utilisateur depuis le localStorage.
- * Retourne null si rien n'est stocké ou si les données sont invalides.
- */
 function loadUserFromLocal() {
   try {
     const raw = localStorage.getItem(LOCAL_USER_KEY)
@@ -59,7 +51,6 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
   const memberships = memberData ?? []
   setMemberships(memberships)
 
-  // Sauvegarde dans le localStorage avec la structure complète groups imbriquée
   saveUserToLocal(authSession.user, memberships)
 
   if (memberships.length === 1) {
@@ -135,13 +126,14 @@ export default function App() {
     }
 
     // ─── Timeout absolu ──────────────────────────────────────────────────────
+    // Évite le chargement infini si Supabase ne répond jamais
     const absoluteTimeout = setTimeout(() => {
       setLoading(false)
     }, 8000)
 
-    // ─── Chargement instantané depuis le localStorage ────────────────────────
-    // On vérifie que les memberships ont bien la structure groups imbriquée
-    // Si ce n'est pas le cas, on attend Supabase pour avoir des données valides
+    // ─── Chargement depuis le localStorage ───────────────────────────────────
+    // On charge uniquement si les memberships ont la structure groups imbriquée
+    // Sinon on attend Supabase pour avoir des données complètes et valides
     const cached = loadUserFromLocal()
     if (cached) {
       const validMemberships = (cached.memberships ?? []).filter(m => m?.groups)
@@ -154,6 +146,8 @@ export default function App() {
         clearTimeout(absoluteTimeout)
         setLoading(false)
       }
+      // Si pas de memberships valides → on reste en loading
+      // et on attend que Supabase réponde via onAuthStateChange ou fallback
     }
 
     // ─── Vérification Supabase en arrière-plan ───────────────────────────────
