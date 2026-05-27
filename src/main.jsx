@@ -9,11 +9,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   </React.StrictMode>
 )
 
-// Désenregistre tous les service workers existants
-// Supprimé car il causait des problèmes de cache — sera réimplémenté
-// proprement pour le mode hors ligne dans une future version
+// ─── Enregistrement du service worker PWA ────────────────────────────────────
+// Cache les assets statiques pour améliorer les performances
+// Ne cache PAS les requêtes Supabase pour éviter les bugs d'auth
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then((registrations) => {
-    registrations.forEach((registration) => registration.unregister())
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('Service worker registration failed:', err)
+    })
   })
 }
