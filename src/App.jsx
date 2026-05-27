@@ -22,10 +22,6 @@ import { useRangeStore } from './stores/rangeStore'
 
 const LOCAL_USER_KEY = 'poker_user'
 
-/**
- * Sauvegarde les infos utilisateur dans le localStorage.
- * Appelé à chaque connexion réussie.
- */
 function saveUserToLocal(user, memberships) {
   localStorage.setItem(LOCAL_USER_KEY, JSON.stringify({
     id: user.id,
@@ -35,10 +31,6 @@ function saveUserToLocal(user, memberships) {
   }))
 }
 
-/**
- * Relit les infos utilisateur depuis le localStorage.
- * Retourne null si rien n'est stocké.
- */
 function loadUserFromLocal() {
   try {
     const raw = localStorage.getItem(LOCAL_USER_KEY)
@@ -59,7 +51,6 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
   const memberships = memberData ?? []
   setMemberships(memberships)
 
-  // Sauvegarde dans le localStorage pour le prochain refresh
   saveUserToLocal(authSession.user, memberships)
 
   if (memberships.length === 1) {
@@ -118,7 +109,7 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [player, setPlayer] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [authError, setAuthError] = useState(null) // Erreur auth affichée à l'écran
+  const [authError, setAuthError] = useState(null)
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
 
   const reset = useRangeStore((state) => state.reset)
@@ -134,9 +125,13 @@ export default function App() {
       return
     }
 
+    // ─── Timeout absolu — quoi qu'il arrive, on sort du chargement après 8s ──
+    // Évite le chargement infini si Supabase ne répond jamais
+    const absoluteTimeout = setTimeout(() => {
+      setLoading(false)
+    }, 8000)
+
     // ─── Chargement instantané depuis le localStorage ────────────────────────
-    // Si on a des infos en cache, on affiche l'app immédiatement
-    // sans attendre Supabase
     const cached = loadUserFromLocal()
     if (cached) {
       setAuthUser({ id: cached.id, email: cached.email, user_metadata: { username: cached.username } })
@@ -144,15 +139,16 @@ export default function App() {
       if ((cached.memberships ?? []).length === 1) {
         setMembership(cached.memberships[0])
       }
-      setLoading(false) // ← affichage instantané
+      clearTimeout(absoluteTimeout) // Plus besoin d'attendre
+      setLoading(false)
     }
 
     // ─── Vérification Supabase en arrière-plan ───────────────────────────────
-    // On vérifie quand même que le token est valide et on met à jour les données
     let handled = false
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
       handled = true
+      clearTimeout(absoluteTimeout)
 
       if (event === 'PASSWORD_RECOVERY') {
         setIsPasswordRecovery(true)
@@ -161,7 +157,6 @@ export default function App() {
       }
 
       if (event === 'TOKEN_REFRESHED' && !authSession) {
-        // Token expiré et non renouvelable → déconnexion propre
         localStorage.removeItem(LOCAL_USER_KEY)
         localStorage.removeItem('poker_session')
         setAuthUser(null)
@@ -174,7 +169,6 @@ export default function App() {
       }
 
       if (!authSession) {
-        // Pas de session → déconnexion
         localStorage.removeItem(LOCAL_USER_KEY)
         localStorage.removeItem('poker_session')
         setAuthUser(null)
@@ -184,34 +178,27 @@ export default function App() {
         return
       }
 
-      // Session valide → met à jour les données en arrière-plan
-      // Si on avait déjà chargé depuis le cache, setLoading est déjà false
-      // handleAuthSession va juste rafraîchir les memberships silencieusement
       await handleAuthSession(authSession, handlers)
     })
 
-    // Fallback : si onAuthStateChange ne se déclenche pas dans les 3s
+    // ─── Fallback getSession après 3s si onAuthStateChange muet ─────────────
     const fallbackTimeout = setTimeout(async () => {
       if (handled) return
       handled = true
       try {
         const { data: { session: authSession }, error } = await supabase.auth.getSession()
         if (error || !authSession) {
-          // Pas de session valide
           if (!cached) {
-            // Pas de cache non plus → page de connexion
             localStorage.removeItem(LOCAL_USER_KEY)
             setAuthUser(null)
             setMemberships([])
             setMembership(null)
             setLoading(false)
           }
-          // Si on avait un cache, on reste connecté jusqu'à expiration
           return
         }
         await handleAuthSession(authSession, handlers)
       } catch (e) {
-        // Erreur réseau — si on a un cache on reste connecté, sinon page de connexion
         if (!cached) {
           setAuthError('Impossible de se connecter. Vérifiez votre connexion réseau.')
           setLoading(false)
@@ -222,6 +209,7 @@ export default function App() {
     return () => {
       subscription.unsubscribe()
       clearTimeout(fallbackTimeout)
+      clearTimeout(absoluteTimeout)
     }
   }, [])
 
@@ -257,7 +245,6 @@ export default function App() {
   }
 
   const handleGroupJoined = (memberData) => {
-    // Met à jour le cache local avec le nouveau groupe
     const cached = loadUserFromLocal()
     if (cached) {
       saveUserToLocal(
@@ -289,7 +276,6 @@ export default function App() {
     localStorage.removeItem('poker_session')
     reset()
     const remaining = memberships.filter((m) => m.id !== membership.id)
-    // Met à jour le cache local
     const cached = loadUserFromLocal()
     if (cached) {
       saveUserToLocal(
