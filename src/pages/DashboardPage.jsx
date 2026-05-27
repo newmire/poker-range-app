@@ -12,6 +12,7 @@
  * - Spinner + flash vert sur le bouton Sauvegarder
  * - Nombre d'utilisateurs connectés dans la liste joueurs
  * - Toast notification quand un joueur rejoint (master uniquement)
+ * - Raccourcis clavier : C/R/3/4/A → actions, V → Reg/Fish, X → Clear, Échap → désélection
  */
 
 import { useEffect, useState, useRef } from 'react'
@@ -19,6 +20,7 @@ import RangeGrid from '../components/RangeGrid/RangeGrid'
 import BottomActionBar from '../components/Layout/BottomActionBar'
 import { useRangeStore } from '../stores/rangeStore'
 import { generateMatrix } from '../components/RangeGrid/rangeMatrix'
+import { ACTIONS } from '../data/actions'
 import { supabase } from '../lib/supabase'
 import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
@@ -52,6 +54,7 @@ function getStatus(lastSeen) {
   return { color: '#444' }
 }
 
+/** Œil ouvert — indique la vue broadcastée à tous */
 function EyeOpen({ color = '#22c55e' }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -61,6 +64,7 @@ function EyeOpen({ color = '#22c55e' }) {
   )
 }
 
+/** Œil fermé — vue non broadcastée */
 function EyeClosed({ color = '#444' }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -71,6 +75,7 @@ function EyeClosed({ color = '#444' }) {
   )
 }
 
+/** Spinner SVG animé pour la sauvegarde en cours */
 function Spinner() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 0.8s linear infinite' }}>
@@ -112,6 +117,7 @@ function Toast({ message }) {
 }
 
 export default function DashboardPage({ session, player, membership, authUser, onLeave, onLogout }) {
+  // ─── Store Zustand ──────────────────────────────────────────────────────────
   const clearMatrix = useRangeStore((state) => state.clearMatrix)
   const setPlayerId = useRangeStore((state) => state.setPlayerId)
   const setActivePlayerIdInStore = useRangeStore((state) => state.setActivePlayerId)
@@ -124,7 +130,9 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const setPositionSilent = useRangeStore((state) => state.setPositionSilent)
   const setStackSizeSilent = useRangeStore((state) => state.setStackSizeSilent)
   const setVersusSilent = useRangeStore((state) => state.setVersusSilent)
+  const setSelectedAction = useRangeStore((state) => state.setSelectedAction)
 
+  // ─── State local ────────────────────────────────────────────────────────────
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [players, setPlayers] = useState([])
   const [members, setMembers] = useState([])
@@ -142,8 +150,6 @@ export default function DashboardPage({ session, player, membership, authUser, o
   const [saveShared, setSaveShared] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
-
-  // Toast notification
   const [toast, setToast] = useState(null)
   const toastTimeout = useRef(null)
 
@@ -159,11 +165,70 @@ export default function DashboardPage({ session, player, membership, authUser, o
   }
 
   useEffect(() => {
-    return () => {
-      if (toastTimeout.current) clearTimeout(toastTimeout.current)
-    }
+    return () => { if (toastTimeout.current) clearTimeout(toastTimeout.current) }
   }, [])
 
+  // ─── Raccourcis clavier ──────────────────────────────────────────────────────
+  // Actifs uniquement si aucun input n'est focus et aucune modal ouverte.
+  // Utilise les IDs exacts définis dans actions.js.
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Ignore si focus sur un champ de saisie
+      const tag = document.activeElement?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return
+
+      // Ignore si une modal est ouverte
+      if (showSaveModal || showLibrary || showMembers || showLeaveConfirm) return
+
+      switch (e.key.toLowerCase()) {
+        case 'c':
+          // Call
+          setSelectedAction(ACTIONS.find(a => a.id === 'CALL'))
+          showToast('🟢 Call')
+          break
+        case 'r':
+          // Raise
+          setSelectedAction(ACTIONS.find(a => a.id === 'RAISE'))
+          showToast('🔵 Raise')
+          break
+        case '3':
+          // 3Bet
+          setSelectedAction(ACTIONS.find(a => a.id === 'THREE_BET'))
+          showToast('🟠 3Bet')
+          break
+        case '4':
+          // 4Bet
+          setSelectedAction(ACTIONS.find(a => a.id === 'FOUR_BET'))
+          showToast('🔴 4Bet')
+          break
+        case 'a':
+          // All In
+          setSelectedAction(ACTIONS.find(a => a.id === 'ALL_IN'))
+          showToast('🟣 All In')
+          break
+        case 'v':
+          // Switch Reg/Fish
+          handleSelectGrid(activeGrid === 'reg' ? 'fish' : 'reg')
+          break
+        case 'x':
+          // Clear la grille
+          clearMatrix()
+          showToast('🗑️ Grille effacée')
+          break
+        case 'escape':
+          // Désélectionne l'action active
+          setSelectedAction(ACTIONS[1]) // Revient à Call par défaut
+          break
+        default:
+          break
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [activeGrid, showSaveModal, showLibrary, showMembers, showLeaveConfirm])
+
+  // ─── Heartbeat ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!membership?.id) return
     updateLastSeen(membership.id)
@@ -171,6 +236,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => clearInterval(interval)
   }, [membership])
 
+  // ─── Chargement des membres (master seulement) ───────────────────────────────
   useEffect(() => {
     if (!membership?.group_id || !master) return
     getMembers(membership.group_id).then(setMembers)
@@ -180,10 +246,12 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => clearInterval(interval)
   }, [membership, master])
 
+  // ─── Init playerId ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (player?.id) setPlayerId(player.id)
   }, [player])
 
+  // ─── Chargement initial des joueurs ─────────────────────────────────────────
   useEffect(() => {
     if (!session) return
     getPlayers(session.id).then((p) => {
@@ -198,18 +266,15 @@ export default function DashboardPage({ session, player, membership, authUser, o
   }, [session])
 
   // ─── Realtime joueurs + toast ────────────────────────────────────────────────
-  // Détecte les nouveaux joueurs et affiche un toast côté master
-  const playersRef = useRef([])
   useEffect(() => {
     if (!session) return
     const sub = subscribeToPlayers(session.id, (payload) => {
       getPlayers(session.id).then((updatedPlayers) => {
-        // Détecte un nouveau joueur (INSERT) côté master
+        // Toast côté master quand un nouveau joueur rejoint
         if (master && payload.eventType === 'INSERT' && payload.new?.id !== player.id) {
           showToast(`🎮 ${payload.new.name} a rejoint la session`)
         }
         setPlayers(updatedPlayers)
-        playersRef.current = updatedPlayers
         if (master && payload.new?.id === localViewedId) {
           const updated = updatedPlayers.find((p) => p.id === payload.new.id)
           if (updated) {
@@ -227,6 +292,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => sub.unsubscribe()
   }, [session, master, localViewedId])
 
+  // ─── Realtime broadcast ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!session) return
     const sub = subscribeToSession(session.id, (payload) => {
@@ -247,6 +313,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => sub.unsubscribe()
   }, [session, player, players, master])
 
+  // ─── Indicateur Realtime ────────────────────────────────────────────────────
   useEffect(() => {
     if (!session) return
     const channel = supabase
@@ -262,17 +329,23 @@ export default function DashboardPage({ session, player, membership, authUser, o
     return () => channel.unsubscribe()
   }, [session])
 
+  // ─── Resize ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768)
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
+  /** Retourne la couleur de statut d'un joueur via son username dans members */
   const getMemberStatus = (playerName) => {
     const member = members.find((m) => m.username === playerName)
     return member ? getStatus(member.last_seen) : { color: '#444' }
   }
 
+  /**
+   * Navigation locale du master vers un joueur.
+   * Sauvegarde la range courante avant de changer, ne broadcaste pas.
+   */
   const handleSelectPlayer = async (p) => {
     const { matrix, activePlayerId } = useRangeStore.getState()
     if (activePlayerId) await saveRange(activePlayerId, matrix, activeGrid)
@@ -288,6 +361,10 @@ export default function DashboardPage({ session, player, membership, authUser, o
     setActiveGrid(v)
   }
 
+  /**
+   * Toggle broadcast via l'œil.
+   * Œil ouvert = vue imposée à tous / Œil fermé = pas de broadcast.
+   */
   const handleBroadcast = async (p) => {
     if (broadcastedId === p.id) {
       await setActivePlayer(session.id, null)
@@ -298,6 +375,10 @@ export default function DashboardPage({ session, player, membership, authUser, o
     }
   }
 
+  /**
+   * Switch entre grille Reg et Fish.
+   * Sauvegarde la grille courante avant de switcher.
+   */
   const handleSelectGrid = async (gridVersus) => {
     if (gridVersus === activeGrid) return
     const { matrix, activePlayerId } = useRangeStore.getState()
@@ -315,6 +396,10 @@ export default function DashboardPage({ session, player, membership, authUser, o
     if (activePlayerId) saveContext(activePlayerId, { position, stackSize, versus: gridVersus })
   }
 
+  /**
+   * Sauvegarde dans la bibliothèque.
+   * Affiche un spinner pendant la sauvegarde, puis un flash vert 1.5s.
+   */
   const handleSaveToLibrary = async () => {
     if (!saveName.trim()) return
     setSaving(true)
@@ -341,6 +426,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
     }
   }
 
+  /** Charge une range depuis la bibliothèque dans la grille courante */
   const handleUseRange = (range) => {
     if (range.range?.length > 0) setMatrix(range.range)
     if (range.context?.position) setPositionSilent(range.context.position)
@@ -352,6 +438,12 @@ export default function DashboardPage({ session, player, membership, authUser, o
     setShowLibrary(false)
   }
 
+  /**
+   * Quitte la session :
+   * - Sauvegarde la range courante
+   * - Marque le joueur comme inactif (is_active = false)
+   * - Le trigger DB supprime la session si tous les joueurs sont inactifs
+   */
   const handleConfirmLeave = async () => {
     const { matrix, activePlayerId } = useRangeStore.getState()
     if (activePlayerId) await saveRange(activePlayerId, matrix, activeGrid)
@@ -360,6 +452,10 @@ export default function DashboardPage({ session, player, membership, authUser, o
     onLeave()
   }
 
+  /**
+   * Observation locale de la range d'un autre joueur (non-master).
+   * Clic sur le même joueur = retour à sa propre range.
+   */
   const handleViewPlayer = (p) => {
     if (p.id === viewedPlayerId) {
       setViewedPlayerId(null)
@@ -372,6 +468,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
     if (range?.length > 0) setMatrix(range)
   }
 
+  // Tri des joueurs : soi-même en premier
   const sortedPlayers = [
     ...players.filter((p) => p.id === player.id),
     ...players.filter((p) => p.id !== player.id),
@@ -432,6 +529,7 @@ export default function DashboardPage({ session, player, membership, authUser, o
 
         <button style={styles.button} onClick={clearMatrix}>Clear</button>
 
+        {/* Bouton Sauvegarder avec spinner + flash vert */}
         <button
           style={{
             ...styles.saveBtn,
@@ -580,6 +678,38 @@ export default function DashboardPage({ session, player, membership, authUser, o
             })}
           </div>
         )}
+
+        {/* ── Aide raccourcis clavier (desktop uniquement) ── */}
+        {!isMobile && (
+          <div style={{ width: '100%', marginTop: '4px' }}>
+            <hr style={{ opacity: 0.15, margin: '4px 0' }} />
+            <p style={{ ...styles.playerListTitle, marginBottom: '4px' }}>Raccourcis</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+              {[
+                ['C', 'Call'],
+                ['R', 'Raise'],
+                ['3', '3Bet'],
+                ['4', '4Bet'],
+                ['A', 'All In'],
+                ['V', 'Reg / Fish'],
+                ['X', 'Clear'],
+              ].map(([key, label]) => (
+                <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: '#555', fontSize: '11px' }}>{label}</span>
+                  <kbd style={{
+                    backgroundColor: '#1a1a1a',
+                    border: '1px solid #333',
+                    borderRadius: '4px',
+                    padding: '1px 6px',
+                    fontSize: '10px',
+                    color: '#666',
+                    fontFamily: 'monospace',
+                  }}>{key}</kbd>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Zone grille ── */}
@@ -706,7 +836,6 @@ const styles = {
   toggleBtn: { flex: 1, padding: '10px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', transition: '0.15s' },
   playerList: { display: 'flex', flexDirection: 'column', gap: '6px', width: '100%' },
   playerListTitle: { color: '#666', fontSize: '11px', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' },
-  playerBtn: { padding: '10px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1a1a1a', color: '#ccc', cursor: 'pointer', fontSize: '13px', textAlign: 'left', transition: '0.15s' },
   noPlayers: { color: '#444', fontSize: '12px', margin: 0, fontStyle: 'italic' },
   gridLabel: { color: '#aaa', fontSize: '13px', fontWeight: 'bold' },
   modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 },
