@@ -347,6 +347,7 @@ export default function App() {
       <GroupSelectPage
         memberships={memberships}
         onSelect={handleSelectGroup}
+        authUser={authUser}
       />
     )
   }
