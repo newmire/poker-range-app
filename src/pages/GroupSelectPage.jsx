@@ -6,14 +6,10 @@ import { useState } from 'react'
 import GroupPage from './GroupPage'
 import { supabase } from '../lib/supabase'
 
-export default function GroupSelectPage({ memberships, onSelect, authUser }) {
+export default function GroupSelectPage({ memberships = [], onSelect, authUser }) {
   const [showGroupModal, setShowGroupModal] = useState(false)
   const [realUser, setRealUser] = useState(null)
 
-  /**
-   * Ouvre le modal en récupérant le vrai user Supabase
-   * pour garantir que le token est valide pour les requêtes DB
-   */
   const handleOpenGroupModal = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     setRealUser(user ?? authUser)
@@ -25,13 +21,16 @@ export default function GroupSelectPage({ memberships, onSelect, authUser }) {
     onSelect(memberData)
   }
 
+  // Sécurité — filtre les memberships sans données de groupe
+  const validMemberships = memberships.filter((m) => m?.groups?.name)
+
   return (
     <div style={styles.page}>
       <div style={styles.card}>
         <h1 style={styles.title}>🃏 Poker Range</h1>
         <p style={styles.subtitle}>Choisissez un groupe</p>
         <div style={styles.list}>
-          {memberships.map((m) => (
+          {validMemberships.map((m) => (
             <button
               key={m.id}
               style={styles.groupBtn}
