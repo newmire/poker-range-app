@@ -22,6 +22,10 @@ import { useRangeStore } from './stores/rangeStore'
 
 const LOCAL_USER_KEY = 'poker_user'
 
+/**
+ * Sauvegarde les infos utilisateur dans le localStorage.
+ * Inclut les memberships avec leurs groupes imbriqués.
+ */
 function saveUserToLocal(user, memberships) {
   localStorage.setItem(LOCAL_USER_KEY, JSON.stringify({
     id: user.id,
@@ -31,6 +35,10 @@ function saveUserToLocal(user, memberships) {
   }))
 }
 
+/**
+ * Relit les infos utilisateur depuis le localStorage.
+ * Retourne null si rien n'est stocké ou si les données sont invalides.
+ */
 function loadUserFromLocal() {
   try {
     const raw = localStorage.getItem(LOCAL_USER_KEY)
@@ -51,6 +59,7 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
   const memberships = memberData ?? []
   setMemberships(memberships)
 
+  // Sauvegarde dans le localStorage avec la structure complète groups imbriquée
   saveUserToLocal(authSession.user, memberships)
 
   if (memberships.length === 1) {
@@ -125,22 +134,26 @@ export default function App() {
       return
     }
 
-    // ─── Timeout absolu — quoi qu'il arrive, on sort du chargement après 8s ──
-    // Évite le chargement infini si Supabase ne répond jamais
+    // ─── Timeout absolu ──────────────────────────────────────────────────────
     const absoluteTimeout = setTimeout(() => {
       setLoading(false)
     }, 8000)
 
     // ─── Chargement instantané depuis le localStorage ────────────────────────
+    // On vérifie que les memberships ont bien la structure groups imbriquée
+    // Si ce n'est pas le cas, on attend Supabase pour avoir des données valides
     const cached = loadUserFromLocal()
     if (cached) {
-      setAuthUser({ id: cached.id, email: cached.email, user_metadata: { username: cached.username } })
-      setMemberships(cached.memberships ?? [])
-      if ((cached.memberships ?? []).length === 1) {
-        setMembership(cached.memberships[0])
+      const validMemberships = (cached.memberships ?? []).filter(m => m?.groups)
+      if (validMemberships.length > 0) {
+        setAuthUser({ id: cached.id, email: cached.email, user_metadata: { username: cached.username } })
+        setMemberships(validMemberships)
+        if (validMemberships.length === 1) {
+          setMembership(validMemberships[0])
+        }
+        clearTimeout(absoluteTimeout)
+        setLoading(false)
       }
-      clearTimeout(absoluteTimeout) // Plus besoin d'attendre
-      setLoading(false)
     }
 
     // ─── Vérification Supabase en arrière-plan ───────────────────────────────
@@ -289,8 +302,6 @@ export default function App() {
     setPlayer(null)
   }
 
-  // ─── Écran de chargement ─────────────────────────────────────────────────
-  // Affiché uniquement si pas de cache local (première visite ou déconnecté)
   if (loading) {
     return (
       <div style={{
