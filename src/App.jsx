@@ -3,9 +3,10 @@
  *
  * Gère :
  * - L'authentification Supabase (connexion persistante)
- * - La reconnexion automatique à une session live via localStorage
+ * - La reconnexion automatique via localStorage (instantanée au refresh)
+ * - Vérification du token Supabase en arrière-plan
  * - Le routing entre les pages (Login → GroupSelect → Group → Lobby → Dashboard)
- * - La gestion multi-groupes (un utilisateur peut appartenir à plusieurs groupes)
+ * - La gestion multi-groupes
  * - La réinitialisation du mot de passe (event PASSWORD_RECOVERY)
  */
 
@@ -19,6 +20,34 @@ import ResetPasswordPage from './pages/ResetPasswordPage'
 import { supabase } from './lib/supabase'
 import { useRangeStore } from './stores/rangeStore'
 
+const LOCAL_USER_KEY = 'poker_user'
+
+/**
+ * Sauvegarde les infos utilisateur dans le localStorage.
+ * Appelé à chaque connexion réussie.
+ */
+function saveUserToLocal(user, memberships) {
+  localStorage.setItem(LOCAL_USER_KEY, JSON.stringify({
+    id: user.id,
+    email: user.email,
+    username: user.user_metadata?.username ?? user.email,
+    memberships,
+  }))
+}
+
+/**
+ * Relit les infos utilisateur depuis le localStorage.
+ * Retourne null si rien n'est stocké.
+ */
+function loadUserFromLocal() {
+  try {
+    const raw = localStorage.getItem(LOCAL_USER_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
 async function handleAuthSession(authSession, { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }) {
   setAuthUser(authSession.user)
 
@@ -29,6 +58,9 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
 
   const memberships = memberData ?? []
   setMemberships(memberships)
+
+  // Sauvegarde dans le localStorage pour le prochain refresh
+  saveUserToLocal(authSession.user, memberships)
 
   if (memberships.length === 1) {
     setMembership(memberships[0])
@@ -86,16 +118,15 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [player, setPlayer] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [loadingTooLong, setLoadingTooLong] = useState(false)
+  const [authError, setAuthError] = useState(null) // Erreur auth affichée à l'écran
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
 
   const reset = useRangeStore((state) => state.reset)
 
   useEffect(() => {
     const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }
-    let handled = false
 
-    // ─── Détection immédiate d'un lien de recovery dans l'URL ───────────────
+    // ─── Détection d'un lien de recovery dans l'URL ──────────────────────────
     const hash = window.location.hash
     if (hash.includes('type=recovery')) {
       setIsPasswordRecovery(true)
@@ -103,16 +134,25 @@ export default function App() {
       return
     }
 
-    // Après 15s affiche le bouton "Réessayer" — délai volontairement long
-    // pour éviter les faux positifs sur réseau lent
-    const slowTimeout = setTimeout(() => {
-      setLoadingTooLong(true)
-    }, 15000)
+    // ─── Chargement instantané depuis le localStorage ────────────────────────
+    // Si on a des infos en cache, on affiche l'app immédiatement
+    // sans attendre Supabase
+    const cached = loadUserFromLocal()
+    if (cached) {
+      setAuthUser({ id: cached.id, email: cached.email, user_metadata: { username: cached.username } })
+      setMemberships(cached.memberships ?? [])
+      if ((cached.memberships ?? []).length === 1) {
+        setMembership(cached.memberships[0])
+      }
+      setLoading(false) // ← affichage instantané
+    }
+
+    // ─── Vérification Supabase en arrière-plan ───────────────────────────────
+    // On vérifie quand même que le token est valide et on met à jour les données
+    let handled = false
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
       handled = true
-      clearTimeout(slowTimeout)
-      setLoadingTooLong(false)
 
       if (event === 'PASSWORD_RECOVERY') {
         setIsPasswordRecovery(true)
@@ -121,15 +161,21 @@ export default function App() {
       }
 
       if (event === 'TOKEN_REFRESHED' && !authSession) {
-        localStorage.clear()
+        // Token expiré et non renouvelable → déconnexion propre
+        localStorage.removeItem(LOCAL_USER_KEY)
+        localStorage.removeItem('poker_session')
         setAuthUser(null)
         setMemberships([])
         setMembership(null)
+        setSession(null)
+        setPlayer(null)
         setLoading(false)
         return
       }
 
       if (!authSession) {
+        // Pas de session → déconnexion
+        localStorage.removeItem(LOCAL_USER_KEY)
         localStorage.removeItem('poker_session')
         setAuthUser(null)
         setMemberships([])
@@ -138,37 +184,43 @@ export default function App() {
         return
       }
 
+      // Session valide → met à jour les données en arrière-plan
+      // Si on avait déjà chargé depuis le cache, setLoading est déjà false
+      // handleAuthSession va juste rafraîchir les memberships silencieusement
       await handleAuthSession(authSession, handlers)
     })
 
-    // Fallback : si onAuthStateChange ne se déclenche pas dans les 3s,
-    // appelle getSession manuellement.
-    // handled = true empêche la double exécution si onAuthStateChange
-    // se déclenche entre-temps.
+    // Fallback : si onAuthStateChange ne se déclenche pas dans les 3s
     const fallbackTimeout = setTimeout(async () => {
       if (handled) return
       handled = true
       try {
         const { data: { session: authSession }, error } = await supabase.auth.getSession()
-        if (error) {
-          localStorage.clear()
-          setLoading(false)
-          return
-        }
-        if (!authSession) {
-          setLoading(false)
+        if (error || !authSession) {
+          // Pas de session valide
+          if (!cached) {
+            // Pas de cache non plus → page de connexion
+            localStorage.removeItem(LOCAL_USER_KEY)
+            setAuthUser(null)
+            setMemberships([])
+            setMembership(null)
+            setLoading(false)
+          }
+          // Si on avait un cache, on reste connecté jusqu'à expiration
           return
         }
         await handleAuthSession(authSession, handlers)
       } catch (e) {
-        localStorage.clear()
-        setLoading(false)
+        // Erreur réseau — si on a un cache on reste connecté, sinon page de connexion
+        if (!cached) {
+          setAuthError('Impossible de se connecter. Vérifiez votre connexion réseau.')
+          setLoading(false)
+        }
       }
     }, 3000)
 
     return () => {
       subscription.unsubscribe()
-      clearTimeout(slowTimeout)
       clearTimeout(fallbackTimeout)
     }
   }, [])
@@ -194,6 +246,7 @@ export default function App() {
 
   const handleLogout = async () => {
     localStorage.removeItem('poker_session')
+    localStorage.removeItem(LOCAL_USER_KEY)
     reset()
     await supabase.auth.signOut()
     setAuthUser(null)
@@ -204,6 +257,14 @@ export default function App() {
   }
 
   const handleGroupJoined = (memberData) => {
+    // Met à jour le cache local avec le nouveau groupe
+    const cached = loadUserFromLocal()
+    if (cached) {
+      saveUserToLocal(
+        { id: cached.id, email: cached.email, user_metadata: { username: cached.username } },
+        [...(cached.memberships ?? []), memberData]
+      )
+    }
     setMemberships((prev) => [...prev, memberData])
     setMembership(memberData)
   }
@@ -228,12 +289,22 @@ export default function App() {
     localStorage.removeItem('poker_session')
     reset()
     const remaining = memberships.filter((m) => m.id !== membership.id)
+    // Met à jour le cache local
+    const cached = loadUserFromLocal()
+    if (cached) {
+      saveUserToLocal(
+        { id: cached.id, email: cached.email, user_metadata: { username: cached.username } },
+        remaining
+      )
+    }
     setMemberships(remaining)
     setMembership(null)
     setSession(null)
     setPlayer(null)
   }
 
+  // ─── Écran de chargement ─────────────────────────────────────────────────
+  // Affiché uniquement si pas de cache local (première visite ou déconnecté)
   if (loading) {
     return (
       <div style={{
@@ -246,9 +317,11 @@ export default function App() {
         gap: '16px',
       }}>
         <p style={{ color: '#666', fontSize: '14px', margin: 0 }}>Chargement...</p>
-        {loadingTooLong && (
+        {authError && (
           <>
-            <p style={{ color: '#444', fontSize: '12px', margin: 0 }}>La connexion prend du temps...</p>
+            <p style={{ color: '#ef4444', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '280px' }}>
+              {authError}
+            </p>
             <button
               onClick={() => window.location.reload()}
               style={{
