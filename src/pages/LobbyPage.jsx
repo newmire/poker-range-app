@@ -27,7 +27,7 @@ import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
 import GroupPage from './GroupPage'
 
-export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGroup, onLeaveGroup, authUser }) {
+export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGroup, onLeaveGroup, authUser, supabaseReady = false }) {
   const [mode, setMode] = useState(null)
   const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
@@ -40,7 +40,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   const [copiedSession, setCopiedSession] = useState(false)
   const [copiedInvite, setCopiedInvite] = useState(false)
 
-  // Vérifie si le partage natif est disponible (mobile uniquement)
   const canShare = typeof navigator !== 'undefined' && !!navigator.share
 
   const username = membership.username
@@ -79,8 +78,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
    *
    * On n'appelle plus getSession() en amont : sur mobile après un refresh, le SDK
    * Supabase peut être en train de rafraîchir le token, ce qui fait deadlocker getSession()
-   * indéfiniment. On laisse createSession() remonter l'erreur Supabase si l'auth est invalide,
-   * et on protège l'ensemble avec un timeout de 20s.
+   * indéfiniment. Le bouton est bloqué via supabaseReady jusqu'à confirmation de l'auth.
    */
   const handleCreate = async () => {
     setLoading(true)
@@ -108,7 +106,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
    * Rejoint une session via son code.
    * Si sessionCode est fourni, l'utilise directement (session active détectée).
    * Sinon, utilise le code saisi manuellement.
-   * Même logique que handleCreate : pas de getSession() pour éviter le deadlock mobile.
    */
   const handleJoin = async (sessionCode) => {
     setLoading(true)
@@ -132,17 +129,12 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     }
   }
 
-  /**
-   * Quitte le groupe après confirmation.
-   * Supprime le membership de l'utilisateur et remonte l'événement à App.jsx.
-   */
   const handleLeaveGroup = async () => {
     await leaveGroup(membership.id)
     setShowLeaveConfirm(false)
     onLeaveGroup()
   }
 
-  /** Copie le code de session dans le presse-papier */
   const handleCopySessionCode = () => {
     if (!activeSession?.code) return
     navigator.clipboard.writeText(activeSession.code)
@@ -150,7 +142,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     setTimeout(() => setCopiedSession(false), 1500)
   }
 
-  /** Copie le code d'invitation du groupe dans le presse-papier */
   const handleCopyInviteCode = () => {
     if (!membership.groups?.invite_code) return
     navigator.clipboard.writeText(membership.groups.invite_code)
@@ -158,11 +149,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     setTimeout(() => setCopiedInvite(false), 1500)
   }
 
-  /**
-   * Partage natif mobile du code d'invitation.
-   * Ouvre le menu de partage système (WhatsApp, SMS, etc.)
-   * Disponible uniquement sur mobile via navigator.share().
-   */
   const handleShareInvite = async () => {
     if (!canShare) return
     try {
@@ -180,14 +166,12 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       <div style={styles.card}>
         <h1 style={styles.title}>🃏 Poker Range</h1>
 
-        {/* Infos du groupe et du membre */}
         <div style={styles.groupInfo}>
           <span style={styles.groupName}>👥 {membership.groups?.name}</span>
           <span style={styles.username}>{username}</span>
           {isMaster && <span style={styles.masterBadge}>👑 Master</span>}
         </div>
 
-        {/* Session active détectée automatiquement (joueurs uniquement) */}
         {activeSession && !mode && !isMaster && (
           <div style={styles.activeSessionBox}>
             <p style={styles.activeSessionLabel}>Session en cours</p>
@@ -204,19 +188,18 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
             <button
               style={styles.btnPrimary}
               onClick={() => handleJoin(activeSession.code)}
-              disabled={loading}
+              disabled={loading || !supabaseReady}
             >
-              {loading ? 'Connexion...' : 'Rejoindre la session'}
+              {loading ? 'Connexion...' : !supabaseReady ? '⏳ Synchronisation...' : 'Rejoindre la session'}
             </button>
           </div>
         )}
 
-        {/* Boutons principaux */}
         {!mode && (
           <div style={styles.buttons}>
             {isMaster && (
-              <button style={styles.btnPrimary} onClick={handleCreate} disabled={loading}>
-                {loading ? 'Création...' : 'Créer une session'}
+              <button style={styles.btnPrimary} onClick={handleCreate} disabled={loading || !supabaseReady}>
+                {loading ? 'Création...' : !supabaseReady ? '⏳ Synchronisation...' : 'Créer une session'}
               </button>
             )}
             {!activeSession && !isMaster && (
@@ -248,7 +231,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
           </div>
         )}
 
-        {/* Formulaire de saisie manuelle du code */}
         {mode === 'join' && (
           <div style={styles.form}>
             <input
@@ -259,8 +241,8 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
               maxLength={6}
             />
             {error && <p style={styles.error}>{error}</p>}
-            <button style={styles.btnPrimary} onClick={() => handleJoin()} disabled={loading}>
-              {loading ? 'Connexion...' : 'Rejoindre'}
+            <button style={styles.btnPrimary} onClick={() => handleJoin()} disabled={loading || !supabaseReady}>
+              {loading ? 'Connexion...' : !supabaseReady ? '⏳ Synchronisation...' : 'Rejoindre'}
             </button>
             <button style={styles.btnSecondary} onClick={() => { setMode(null); setError(null) }}>
               Retour
@@ -270,7 +252,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
 
         {!mode && error && <p style={styles.error}>{error}</p>}
 
-        {/* Code d'invitation avec copier + partage natif */}
         {isMaster && membership.groups?.invite_code && (
           <div style={styles.inviteBox}>
             <p style={styles.inviteLabel}>Code d'invitation du groupe</p>
@@ -301,7 +282,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
         </button>
       </div>
 
-      {/* ─── Modal confirmation quitter le groupe ── */}
       {showLeaveConfirm && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
@@ -316,7 +296,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
         </div>
       )}
 
-      {/* ─── Modal rejoindre / créer un groupe ── */}
       {showGroupModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
