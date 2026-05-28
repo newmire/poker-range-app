@@ -1,7 +1,3 @@
-/**
- * App.jsx — Point d'entrée principal de l'application
- */
-
 import { useState, useEffect } from 'react'
 import LobbyPage from './pages/LobbyPage'
 import DashboardPage from './pages/DashboardPage'
@@ -104,7 +100,7 @@ export default function App() {
   const [slowConnection, setSlowConnection] = useState(false)
   const [coldStart, setColdStart] = useState(false)
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
-  const [supabaseReady, setSupabaseReady] = useState(false)  // Auth Supabase confirmée (token prêt)
+  const [supabaseReady, setSupabaseReady] = useState(false)
 
   const reset = useRangeStore((state) => state.reset)
 
@@ -133,7 +129,6 @@ export default function App() {
         clearTimeout(coldStartTimeout)
         clearTimeout(absoluteTimeout)
         setLoading(false)
-        // supabaseReady reste false — sera mis à true quand onAuthStateChange confirme le token
       }
     }
 
@@ -175,11 +170,8 @@ export default function App() {
         return
       }
 
-      // Token validé : les appels DB peuvent passer dès maintenant.
-      // On set supabaseReady ICI, AVANT handleAuthSession (qui fait des requêtes DB),
-      // pour que LobbyPage débloque le bouton au moment exact où c'est safe.
+      // Token validé — les appels DB peuvent passer dès maintenant
       setSupabaseReady(true)
-
       await handleAuthSession(authSession, handlers)
     })
 
@@ -241,16 +233,18 @@ export default function App() {
     setPlayer(null)
   }
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
+    // Nettoie l'état immédiatement — ne pas attendre signOut() qui peut hang sur mobile
     localStorage.removeItem('poker_session')
     localStorage.removeItem(LOCAL_USER_KEY)
     reset()
-    await supabase.auth.signOut()
     setAuthUser(null)
     setMemberships([])
     setMembership(null)
     setSession(null)
     setPlayer(null)
+    // signOut en fire-and-forget
+    supabase.auth.signOut().catch(() => {})
   }
 
   const handleGroupJoined = (memberData) => {
@@ -302,51 +296,24 @@ export default function App() {
 
   if (loading || waitingForMemberships) {
     return (
-      <div style={{
-        minHeight: '100vh',
-        backgroundColor: '#0a0a0a',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '16px',
-        padding: '24px',
-      }}>
+      <div style={{ minHeight: '100vh', backgroundColor: '#0a0a0a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', padding: '24px' }}>
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}>
           <circle cx="12" cy="12" r="10" strokeOpacity="0.2"/>
           <path d="M12 2a10 10 0 0 1 10 10"/>
           <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
         </svg>
-
-        {!slowConnection && !coldStart && (
-          <p style={{ color: '#666', fontSize: '14px', margin: 0 }}>Chargement...</p>
-        )}
-        {slowConnection && !coldStart && (
-          <p style={{ color: '#f59e0b', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '280px' }}>
-            Connexion en cours, merci de patienter...
-          </p>
-        )}
+        {!slowConnection && !coldStart && <p style={{ color: '#666', fontSize: '14px', margin: 0 }}>Chargement...</p>}
+        {slowConnection && !coldStart && <p style={{ color: '#f59e0b', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '280px' }}>Connexion en cours, merci de patienter...</p>}
         {coldStart && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <p style={{ color: '#f59e0b', fontSize: '14px', margin: 0, textAlign: 'center', maxWidth: '300px', fontWeight: 'bold' }}>
-              ⏳ Réactivation du serveur en cours
-            </p>
-            <p style={{ color: '#666', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '300px', lineHeight: '1.5' }}>
-              Le serveur se réveille après une période d'inactivité. Cela peut prendre 20 à 30 secondes. Merci de ne pas fermer cette page.
-            </p>
+            <p style={{ color: '#f59e0b', fontSize: '14px', margin: 0, textAlign: 'center', maxWidth: '300px', fontWeight: 'bold' }}>⏳ Réactivation du serveur en cours</p>
+            <p style={{ color: '#666', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '300px', lineHeight: '1.5' }}>Le serveur se réveille après une période d'inactivité. Cela peut prendre 20 à 30 secondes.</p>
           </div>
         )}
         {authError && (
           <>
-            <p style={{ color: '#ef4444', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '280px' }}>
-              {authError}
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', backgroundColor: '#22c55e', color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}
-            >
-              Réessayer
-            </button>
+            <p style={{ color: '#ef4444', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '280px' }}>{authError}</p>
+            <button onClick={() => window.location.reload()} style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', backgroundColor: '#22c55e', color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>Réessayer</button>
           </>
         )}
       </div>
@@ -354,26 +321,13 @@ export default function App() {
   }
 
   if (isPasswordRecovery) {
-    return (
-      <ResetPasswordPage
-        onDone={() => {
-          setIsPasswordRecovery(false)
-          window.history.replaceState(null, '', window.location.pathname)
-        }}
-      />
-    )
+    return <ResetPasswordPage onDone={() => { setIsPasswordRecovery(false); window.history.replaceState(null, '', window.location.pathname) }} />
   }
 
   if (!authUser) return <LoginPage />
 
   if (authUser && memberships.length > 1 && !membership) {
-    return (
-      <GroupSelectPage
-        memberships={memberships}
-        onSelect={handleSelectGroup}
-        authUser={authUser}
-      />
-    )
+    return <GroupSelectPage memberships={memberships} onSelect={handleSelectGroup} authUser={authUser} />
   }
 
   if (!membership) return <GroupPage user={authUser} onGroupJoined={handleGroupJoined} />

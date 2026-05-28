@@ -1,7 +1,3 @@
-/**
- * LobbyPage.jsx — Page d'accueil après connexion au groupe
- */
-
 import { useState, useEffect } from 'react'
 import {
   createSession,
@@ -23,7 +19,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   const [error, setError] = useState(null)
   const [activeSession, setActiveSession] = useState(null)
 
-  // ─── Fallback : débloque le bouton après 5s si supabaseReady n'arrive pas ──
+  // Fallback local : débloque après 5s si supabaseReady n'arrive pas
   const [localReady, setLocalReady] = useState(supabaseReady)
   useEffect(() => {
     if (supabaseReady) { setLocalReady(true); return }
@@ -69,15 +65,16 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     setLoading(true)
     setError(null)
     try {
-      // getUser() fait un appel direct au serveur d'auth (pas de queue interne).
-      // C'est le pattern Supabase pour débloquer le client après un refresh de page mobile.
+      // getUser() valide le token directement avec le serveur d'auth.
+      // Débloque les requêtes DB Supabase bloquées par le refresh de token mobile.
       const { data: { user }, error: userError } = await withTimeout(
         supabase.auth.getUser(),
         8000,
-        'auth_timeout'
+        'network_timeout'
       )
       if (userError || !user) {
-        setError('Session expirée, veuillez vous reconnecter.')
+        // Erreur auth confirmée (token invalide) → déconnexion automatique
+        onLogout()
         return
       }
       const { session, player } = await withTimeout(
@@ -88,8 +85,11 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       onJoined({ session, player })
     } catch (e) {
       const msg = e.message ?? ''
-      if (msg === 'auth_timeout' || msg.includes('JWT') || msg.includes('auth') || msg.includes('401') || msg.includes('403')) {
-        setError('Session expirée, veuillez vous reconnecter.')
+      if (msg === 'network_timeout') {
+        // Réseau trop lent — ne pas déconnecter, laisser réessayer
+        setError('Réseau trop lent. Réessayez dans quelques secondes.')
+      } else if (msg.includes('JWT') || msg.includes('401') || msg.includes('403')) {
+        onLogout()
       } else {
         setError(msg || 'Une erreur est survenue, réessayez.')
       }
@@ -105,10 +105,10 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       const { data: { user }, error: userError } = await withTimeout(
         supabase.auth.getUser(),
         8000,
-        'auth_timeout'
+        'network_timeout'
       )
       if (userError || !user) {
-        setError('Session expirée, veuillez vous reconnecter.')
+        onLogout()
         return
       }
       const { session, player } = await withTimeout(
@@ -119,8 +119,10 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       onJoined({ session, player })
     } catch (e) {
       const msg = e.message ?? ''
-      if (msg === 'auth_timeout' || msg.includes('JWT') || msg.includes('auth') || msg.includes('401') || msg.includes('403')) {
-        setError('Session expirée, veuillez vous reconnecter.')
+      if (msg === 'network_timeout') {
+        setError('Réseau trop lent. Réessayez dans quelques secondes.')
+      } else if (msg.includes('JWT') || msg.includes('401') || msg.includes('403')) {
+        onLogout()
       } else {
         setError(msg || 'Session introuvable ou erreur réseau.')
       }
