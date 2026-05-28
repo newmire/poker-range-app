@@ -23,6 +23,7 @@ import {
   updateLastSeen,
   leaveGroup,
 } from '../lib/session'
+import { supabase } from '../lib/supabase'
 import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
 import GroupPage from './GroupPage'
@@ -65,10 +66,22 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     return () => sub.unsubscribe()
   }, [groupId])
 
+  /**
+   * Crée une nouvelle session (master uniquement).
+   * Vérifie que la session Supabase est active avant de créer
+   * pour éviter les échecs silencieux sur mobile après un refresh.
+   */
   const handleCreate = async () => {
     setLoading(true)
     setError(null)
     try {
+      // Vérifie que le token Supabase est valide avant de créer
+      const { data: { session: authSession } } = await supabase.auth.getSession()
+      if (!authSession) {
+        setError('Session expirée, veuillez vous reconnecter.')
+        setLoading(false)
+        return
+      }
       const { session, player } = await createSession(username, {}, groupId)
       onJoined({ session, player })
     } catch (e) {
@@ -78,10 +91,23 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     }
   }
 
+  /**
+   * Rejoint une session via son code.
+   * Si sessionCode est fourni, l'utilise directement (session active détectée).
+   * Sinon, utilise le code saisi manuellement.
+   * Vérifie aussi que le token Supabase est valide.
+   */
   const handleJoin = async (sessionCode) => {
     setLoading(true)
     setError(null)
     try {
+      // Vérifie que le token Supabase est valide avant de rejoindre
+      const { data: { session: authSession } } = await supabase.auth.getSession()
+      if (!authSession) {
+        setError('Session expirée, veuillez vous reconnecter.')
+        setLoading(false)
+        return
+      }
       const { session, player } = await joinSession(sessionCode ?? code.trim(), username)
       onJoined({ session, player })
     } catch (e) {
@@ -91,6 +117,10 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     }
   }
 
+  /**
+   * Quitte le groupe après confirmation.
+   * Supprime le membership de l'utilisateur et remonte l'événement à App.jsx.
+   */
   const handleLeaveGroup = async () => {
     await leaveGroup(membership.id)
     setShowLeaveConfirm(false)
@@ -126,7 +156,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
         text: `Rejoins mon groupe "${membership.groups?.name}" sur Poker Range !\nCode d'invitation : ${membership.groups?.invite_code}`,
       })
     } catch (e) {
-      // L'utilisateur a annulé le partage, pas d'erreur à afficher
       if (e.name !== 'AbortError') console.error('erreur partage:', e)
     }
   }
@@ -136,13 +165,14 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       <div style={styles.card}>
         <h1 style={styles.title}>🃏 Poker Range</h1>
 
+        {/* Infos du groupe et du membre */}
         <div style={styles.groupInfo}>
           <span style={styles.groupName}>👥 {membership.groups?.name}</span>
           <span style={styles.username}>{username}</span>
           {isMaster && <span style={styles.masterBadge}>👑 Master</span>}
         </div>
 
-        {/* Session active avec bouton copier */}
+        {/* Session active détectée automatiquement (joueurs uniquement) */}
         {activeSession && !mode && !isMaster && (
           <div style={styles.activeSessionBox}>
             <p style={styles.activeSessionLabel}>Session en cours</p>
@@ -166,6 +196,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
           </div>
         )}
 
+        {/* Boutons principaux */}
         {!mode && (
           <div style={styles.buttons}>
             {isMaster && (
@@ -202,6 +233,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
           </div>
         )}
 
+        {/* Formulaire de saisie manuelle du code */}
         {mode === 'join' && (
           <div style={styles.form}>
             <input
@@ -236,7 +268,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
               >
                 {copiedInvite ? '✓' : '📋'}
               </button>
-              {/* Bouton partage natif — visible uniquement sur mobile */}
               {canShare && (
                 <button
                   style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#666', fontSize: '16px', padding: '2px' }}

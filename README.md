@@ -1,3 +1,4 @@
+
 ```markdown
 # 🃏 Poker Range App
 
@@ -10,9 +11,11 @@ Application collaborative de review de ranges poker, en temps réel, construite 
 ### Authentification
 - Inscription avec **email + password + pseudo**
 - Connexion persistante via Supabase Auth
-- Reconnexion automatique à la session live au rechargement
+- Reconnexion automatique au refresh via **localStorage** (instantané)
+- Vérification du token Supabase en **arrière-plan**
 - **Mot de passe oublié** — email de réinitialisation avec lien sécurisé
 - Touche **Entrée** pour soumettre les formulaires
+- Détection du **cold start Supabase** — message explicite si le serveur se réactive après inactivité
 
 ### Groupes & Membres
 - Création d'un **groupe** (équipe/coaching) par le master
@@ -20,7 +23,7 @@ Application collaborative de review de ranges poker, en temps réel, construite 
 - **Copier le code** en un clic 📋
 - **Partage natif mobile** du code d'invitation (iOS / Android) 📤
 - **Multi-groupes** — un utilisateur peut appartenir à plusieurs groupes et switcher entre eux
-- **Rejoindre / créer un groupe** directement depuis le lobby
+- **Rejoindre / créer un groupe** depuis le lobby ET depuis la page de sélection de groupe
 - **Quitter un groupe** (joueurs uniquement) avec confirmation
 - **Page membres** — le master voit tous les membres et peut en retirer
 - Plusieurs groupes indépendants peuvent coexister
@@ -29,11 +32,13 @@ Application collaborative de review de ranges poker, en temps réel, construite 
 - Création d'une session avec un **code unique** à 6 caractères
 - Les joueurs rejoignent automatiquement la session active du groupe (sans entrer de code)
 - **Reconnexion automatique** — si un joueur recharge la page, il retrouve sa session et sa range intactes
+- **Vérification du token** avant création/rejointe de session (évite les échecs silencieux sur mobile)
 - **Modal de confirmation** avant de quitter une session
 - Suppression automatique de la session quand **tous les joueurs sont partis** (trigger PostgreSQL)
 - **Toast notification** quand un joueur rejoint (côté master) 🎮
 - **Indicateur Realtime** (point vert/rouge) — état de la connexion WebSocket en temps réel
 - **Compteur d'utilisateurs** connectés dans la session
+- **Retry automatique** x3 sur la création de session (resilience réseau lent / 4G)
 
 ### Rôles
 - **👑 Master** — crée la session, peut voir et éditer la range de chaque joueur, broadcaster une vue à tous, gère les membres et la bibliothèque partagée
@@ -54,6 +59,18 @@ Application collaborative de review de ranges poker, en temps réel, construite 
 - Sélection de l'action active via la **barre d'actions** en bas d'écran
 - Cliquer sur une cellule cycle les fréquences : 0% → 100% → +25% → suppression
 - Normalisation automatique des fréquences si le total dépasse 100%
+
+### Raccourcis clavier (desktop)
+| Touche | Action |
+|--------|--------|
+| `C` | Call |
+| `R` | Raise |
+| `3` | 3Bet |
+| `4` | 4Bet |
+| `A` | All In |
+| `V` | Switch Reg / Fish |
+| `X` | Clear la grille |
+| `Échap` | Retour à Call |
 
 ### Contexte par joueur
 - **Position** — sélection parmi UTG, UTG+1, UTG+2, MP, HJ, CO, BTN, SB, BB
@@ -81,12 +98,12 @@ Application collaborative de review de ranges poker, en temps réel, construite 
 ### Bibliothèque de ranges
 - **Sauvegarde** d'une range avec nom, position, BB, versus
 - Spinner + **flash vert** sur le bouton 💾 après sauvegarde
-- Deux types : **Personnelle** 🔒 (visible uniquement par son créateur) ou **Partagée** 👥 (visible par tout le groupe — master uniquement)
+- Deux types : **Personnelle** 🔒 ou **Partagée** 👥 (master uniquement)
 - **Filtres** : par position, versus, personnelle/partagée
 - **Visualisation** de la grille directement dans la bibliothèque
+- **Renommage** : double-clic desktop, bouton ✏️ mobile
 - **Suppression** : le joueur supprime ses ranges personnelles, le master peut tout supprimer
 - Accessible depuis le **lobby** et depuis la **session live**
-- Depuis une session : bouton "Utiliser cette range" pour charger une range sauvegardée
 
 ### Realtime (Supabase)
 - Les ranges des joueurs se synchronisent en **temps réel**
@@ -97,7 +114,10 @@ Application collaborative de review de ranges poker, en temps réel, construite 
 ### PWA (Progressive Web App)
 - **Installable** sur l'écran d'accueil mobile et desktop
 - S'ouvre en **plein écran** sans barre de navigateur
-- **Service worker** — cache intelligent pour éviter les problèmes de version stale
+- **Service worker v2** — cache intelligent :
+  - Assets JS/CSS mis en cache (hash garantit la fraîcheur)
+  - `index.html` toujours rechargé depuis le réseau
+  - Requêtes Supabase **jamais mises en cache**
 - Compatible iOS (Safari) et Android (Chrome)
 
 ---
@@ -208,7 +228,7 @@ src/
 │   ├── session.js                  # toutes les fonctions Supabase
 │   └── supabase.js                 # client Supabase
 ├── pages/
-│   ├── DashboardPage.jsx           # page principale (grille + sidebar)
+│   ├── DashboardPage.jsx           # page principale (grille + sidebar + raccourcis)
 │   ├── GroupPage.jsx               # créer ou rejoindre un groupe (inline ou plein écran)
 │   ├── GroupSelectPage.jsx         # sélection du groupe actif (multi-groupes)
 │   ├── LibraryPage.jsx             # bibliothèque de ranges
@@ -220,8 +240,12 @@ src/
 │   └── rangeStore.js               # store Zustand (état global)
 ├── styles/
 │   └── globals.css
-├── App.jsx                         # routing + auth + reconnexion + password recovery
+├── App.jsx                         # routing + auth + localStorage cache + cold start detection
 └── main.jsx                        # enregistrement PWA service worker
+public/
+├── sw.js                           # service worker PWA v2
+├── manifest.json                   # config PWA (nom, icône, couleurs)
+└── icon.svg                        # icône PWA
 ```
 
 ---
@@ -299,15 +323,48 @@ npm run dev
 
 Le projet est déployé automatiquement sur **Vercel** à chaque push sur `main`.
 
-Les variables d'environnement sont à configurer dans Vercel → Settings → Environment Variables :
+Variables d'environnement à configurer dans Vercel → Settings → Environment Variables :
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
+
+Le fichier `vercel.json` configure `Cache-Control: no-cache` sur `index.html`.
+
+---
+
+## ⚠️ Plan gratuit Supabase
+
+Sur le plan gratuit, Supabase met le projet en **pause après 7 jours d'inactivité**.
+Au réveil, la première connexion peut prendre **20-30 secondes** — l'app affiche un message explicite pendant ce temps.
+
+Limites du plan gratuit :
+- 500 MB de base de données
+- 200 connexions Realtime simultanées
+- 50 000 utilisateurs actifs/mois
+
+---
+
+## 🏷️ Versions stables
+
+| Tag | Description |
+|-----|-------------|
+| `v1.0-stable` | Première version stable — toutes les features de base fonctionnelles |
 
 ---
 
 ## 🗺️ Roadmap
 
+- [ ] Affichage du nombre de combos par range (total, suited, offsuit, par action)
 - [ ] Historique des sessions
 - [ ] Nom de session personnalisé
 - [ ] Mode spectateur (rejoindre en lecture seule)
+- [ ] Service worker — mode hors ligne pour consultation des ranges sauvegardées
+- [ ] Keepalive automatique pour éviter la pause Supabase
+```
 
+**Fichiers :** `src/pages/LobbyPage.jsx` et `README.md` — remplace les deux, puis :
+
+```bash
+git add .
+git commit -m "fix: vérification token avant création/rejointe session mobile + README v4"
+git push
+```
