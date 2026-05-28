@@ -23,7 +23,6 @@ import {
   updateLastSeen,
   leaveGroup,
 } from '../lib/session'
-import { supabase } from '../lib/supabase'
 import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
 import GroupPage from './GroupPage'
@@ -67,25 +66,39 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   }, [groupId])
 
   /**
+   * Wrapper qui rejette une promesse si elle prend plus de `ms` millisecondes.
+   * Évite les hangs infinis sur mobile (ex: SDK Supabase en train de refresh le token).
+   */
+  const withTimeout = (promise, ms, message) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ])
+
+  /**
    * Crée une nouvelle session (master uniquement).
-   * Vérifie que la session Supabase est active avant de créer
-   * pour éviter les échecs silencieux sur mobile après un refresh.
+   *
+   * On n'appelle plus getSession() en amont : sur mobile après un refresh, le SDK
+   * Supabase peut être en train de rafraîchir le token, ce qui fait deadlocker getSession()
+   * indéfiniment. On laisse createSession() remonter l'erreur Supabase si l'auth est invalide,
+   * et on protège l'ensemble avec un timeout de 20s.
    */
   const handleCreate = async () => {
     setLoading(true)
     setError(null)
     try {
-      // Vérifie que le token Supabase est valide avant de créer
-      const { data: { session: authSession } } = await supabase.auth.getSession()
-      if (!authSession) {
-        setError('Session expirée, veuillez vous reconnecter.')
-        setLoading(false)
-        return
-      }
-      const { session, player } = await createSession(username, {}, groupId)
+      const { session, player } = await withTimeout(
+        createSession(username, {}, groupId),
+        20000,
+        'La création a pris trop de temps. Vérifiez votre connexion et réessayez.'
+      )
       onJoined({ session, player })
     } catch (e) {
-      setError(e.message)
+      const msg = e.message ?? ''
+      if (msg.includes('JWT') || msg.includes('auth') || msg.includes('401') || msg.includes('403')) {
+        setError('Session expirée, veuillez vous reconnecter.')
+      } else {
+        setError(msg || 'Une erreur est survenue, réessayez.')
+      }
     } finally {
       setLoading(false)
     }
@@ -95,23 +108,25 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
    * Rejoint une session via son code.
    * Si sessionCode est fourni, l'utilise directement (session active détectée).
    * Sinon, utilise le code saisi manuellement.
-   * Vérifie aussi que le token Supabase est valide.
+   * Même logique que handleCreate : pas de getSession() pour éviter le deadlock mobile.
    */
   const handleJoin = async (sessionCode) => {
     setLoading(true)
     setError(null)
     try {
-      // Vérifie que le token Supabase est valide avant de rejoindre
-      const { data: { session: authSession } } = await supabase.auth.getSession()
-      if (!authSession) {
-        setError('Session expirée, veuillez vous reconnecter.')
-        setLoading(false)
-        return
-      }
-      const { session, player } = await joinSession(sessionCode ?? code.trim(), username)
+      const { session, player } = await withTimeout(
+        joinSession(sessionCode ?? code.trim(), username),
+        20000,
+        'La connexion a pris trop de temps. Vérifiez votre connexion et réessayez.'
+      )
       onJoined({ session, player })
     } catch (e) {
-      setError(e.message)
+      const msg = e.message ?? ''
+      if (msg.includes('JWT') || msg.includes('auth') || msg.includes('401') || msg.includes('403')) {
+        setError('Session expirée, veuillez vous reconnecter.')
+      } else {
+        setError(msg || 'Session introuvable ou erreur réseau.')
+      }
     } finally {
       setLoading(false)
     }
