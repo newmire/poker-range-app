@@ -1,14 +1,5 @@
 /**
  * App.jsx — Point d'entrée principal de l'application
- *
- * Gère :
- * - L'authentification Supabase (connexion persistante)
- * - La reconnexion automatique via localStorage (instantanée au refresh)
- * - Vérification du token Supabase en arrière-plan
- * - Le routing entre les pages (Login → GroupSelect → Group → Lobby → Dashboard)
- * - La gestion multi-groupes
- * - La réinitialisation du mot de passe (event PASSWORD_RECOVERY)
- * - Détection du cold start Supabase (inactivité > 7 jours)
  */
 
 import { useState, useEffect } from 'react'
@@ -51,7 +42,6 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
 
   const memberships = Array.isArray(memberData) ? memberData : []
   setMemberships(memberships)
-
   saveUserToLocal(authSession.user, memberships)
 
   if (memberships.length === 1) {
@@ -62,7 +52,6 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
   }
 
   setLoading(false)
-  setSupabaseReady(true)
 }
 
 async function restoreSession(membership, { setPlayer, setSession }) {
@@ -144,7 +133,7 @@ export default function App() {
         clearTimeout(coldStartTimeout)
         clearTimeout(absoluteTimeout)
         setLoading(false)
-        // supabaseReady reste false jusqu'à confirmation de onAuthStateChange
+        // supabaseReady reste false — sera mis à true quand onAuthStateChange confirme le token
       }
     }
 
@@ -186,6 +175,11 @@ export default function App() {
         return
       }
 
+      // Token validé : les appels DB peuvent passer dès maintenant.
+      // On set supabaseReady ICI, AVANT handleAuthSession (qui fait des requêtes DB),
+      // pour que LobbyPage débloque le bouton au moment exact où c'est safe.
+      setSupabaseReady(true)
+
       await handleAuthSession(authSession, handlers)
     })
 
@@ -209,6 +203,7 @@ export default function App() {
         clearTimeout(absoluteTimeout)
         setSlowConnection(false)
         setColdStart(false)
+        setSupabaseReady(true)
         await handleAuthSession(authSession, handlers)
       } catch (e) {
         if (!cached) {
@@ -326,13 +321,11 @@ export default function App() {
         {!slowConnection && !coldStart && (
           <p style={{ color: '#666', fontSize: '14px', margin: 0 }}>Chargement...</p>
         )}
-
         {slowConnection && !coldStart && (
           <p style={{ color: '#f59e0b', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '280px' }}>
             Connexion en cours, merci de patienter...
           </p>
         )}
-
         {coldStart && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <p style={{ color: '#f59e0b', fontSize: '14px', margin: 0, textAlign: 'center', maxWidth: '300px', fontWeight: 'bold' }}>
@@ -343,7 +336,6 @@ export default function App() {
             </p>
           </div>
         )}
-
         {authError && (
           <>
             <p style={{ color: '#ef4444', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '280px' }}>
@@ -351,16 +343,7 @@ export default function App() {
             </p>
             <button
               onClick={() => window.location.reload()}
-              style={{
-                padding: '10px 24px',
-                borderRadius: '8px',
-                border: 'none',
-                backgroundColor: '#22c55e',
-                color: 'white',
-                fontWeight: 'bold',
-                fontSize: '14px',
-                cursor: 'pointer',
-              }}
+              style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', backgroundColor: '#22c55e', color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}
             >
               Réessayer
             </button>
