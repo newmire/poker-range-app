@@ -64,13 +64,17 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     try {
       const { session, player } = await withTimeout(
         createSession(username, {}, groupId),
-        15000,
+        30000,
         'La création a pris trop de temps. Vérifiez votre connexion et réessayez.'
       )
       onJoined({ session, player })
     } catch (e) {
-      // DEBUG diagnostic — sera retiré après
-      setError('ERREUR: ' + (e.message || JSON.stringify(e) || 'inconnue'))
+      const msg = e.message ?? ''
+      if (msg.includes('JWT') || msg.includes('401') || msg.includes('403')) {
+        onLogout()
+      } else {
+        setError(msg || 'Une erreur est survenue, réessayez.')
+      }
     } finally {
       setLoading(false)
     }
@@ -82,7 +86,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     try {
       const { session, player } = await withTimeout(
         joinSession(sessionCode ?? code.trim(), username),
-        15000,
+        30000,
         'La connexion a pris trop de temps. Vérifiez votre connexion et réessayez.'
       )
       onJoined({ session, player })
