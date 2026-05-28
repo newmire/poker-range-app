@@ -1,17 +1,5 @@
 /**
  * LobbyPage.jsx — Page d'accueil après connexion au groupe
- *
- * Affiche :
- * - Les infos du groupe et du membre connecté
- * - La session active du groupe (détectée automatiquement via Realtime)
- * - Les boutons pour créer/rejoindre une session (selon le rôle)
- * - L'accès à la bibliothèque de ranges et à la gestion des membres
- * - Bouton "Changer de groupe" si l'utilisateur appartient à plusieurs groupes
- * - Bouton "Rejoindre / Créer un groupe" pour rejoindre un nouveau groupe
- * - Bouton "Quitter le groupe" pour les joueurs (pas le master)
- * - Copier le code de session en un clic (bouton 📋)
- * - Copier le code d'invitation du groupe en un clic
- * - Partage natif mobile du code d'invitation (bouton 📤)
  */
 
 import { useState, useEffect } from 'react'
@@ -33,6 +21,17 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [activeSession, setActiveSession] = useState(null)
+
+  // ─── Fallback : débloque le bouton après 5s si supabaseReady n'arrive pas ──
+  // Protège contre les cas où onAuthStateChange est lent ou ne fire pas
+  const [localReady, setLocalReady] = useState(supabaseReady)
+  useEffect(() => {
+    if (supabaseReady) { setLocalReady(true); return }
+    const t = setTimeout(() => setLocalReady(true), 5000)
+    return () => clearTimeout(t)
+  }, [supabaseReady])
+  const ready = supabaseReady || localReady
+
   const [showLibrary, setShowLibrary] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
   const [showGroupModal, setShowGroupModal] = useState(false)
@@ -64,22 +63,11 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     return () => sub.unsubscribe()
   }, [groupId])
 
-  /**
-   * Wrapper qui rejette une promesse si elle prend plus de `ms` millisecondes.
-   * Évite les hangs infinis sur mobile (ex: SDK Supabase en train de refresh le token).
-   */
   const withTimeout = (promise, ms, message) => Promise.race([
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
   ])
 
-  /**
-   * Crée une nouvelle session (master uniquement).
-   *
-   * On n'appelle plus getSession() en amont : sur mobile après un refresh, le SDK
-   * Supabase peut être en train de rafraîchir le token, ce qui fait deadlocker getSession()
-   * indéfiniment. Le bouton est bloqué via supabaseReady jusqu'à confirmation de l'auth.
-   */
   const handleCreate = async () => {
     setLoading(true)
     setError(null)
@@ -102,11 +90,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     }
   }
 
-  /**
-   * Rejoint une session via son code.
-   * Si sessionCode est fourni, l'utilise directement (session active détectée).
-   * Sinon, utilise le code saisi manuellement.
-   */
   const handleJoin = async (sessionCode) => {
     setLoading(true)
     setError(null)
@@ -188,9 +171,9 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
             <button
               style={styles.btnPrimary}
               onClick={() => handleJoin(activeSession.code)}
-              disabled={loading || !supabaseReady}
+              disabled={loading || !ready}
             >
-              {loading ? 'Connexion...' : !supabaseReady ? '⏳ Synchronisation...' : 'Rejoindre la session'}
+              {loading ? 'Connexion...' : !ready ? '⏳ Synchronisation...' : 'Rejoindre la session'}
             </button>
           </div>
         )}
@@ -198,8 +181,8 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
         {!mode && (
           <div style={styles.buttons}>
             {isMaster && (
-              <button style={styles.btnPrimary} onClick={handleCreate} disabled={loading || !supabaseReady}>
-                {loading ? 'Création...' : !supabaseReady ? '⏳ Synchronisation...' : 'Créer une session'}
+              <button style={styles.btnPrimary} onClick={handleCreate} disabled={loading || !ready}>
+                {loading ? 'Création...' : !ready ? '⏳ Synchronisation...' : 'Créer une session'}
               </button>
             )}
             {!activeSession && !isMaster && (
@@ -241,8 +224,8 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
               maxLength={6}
             />
             {error && <p style={styles.error}>{error}</p>}
-            <button style={styles.btnPrimary} onClick={() => handleJoin()} disabled={loading || !supabaseReady}>
-              {loading ? 'Connexion...' : !supabaseReady ? '⏳ Synchronisation...' : 'Rejoindre'}
+            <button style={styles.btnPrimary} onClick={() => handleJoin()} disabled={loading || !ready}>
+              {loading ? 'Connexion...' : !ready ? '⏳ Synchronisation...' : 'Rejoindre'}
             </button>
             <button style={styles.btnSecondary} onClick={() => { setMode(null); setError(null) }}>
               Retour
