@@ -1,3 +1,16 @@
+/**
+ * App.jsx — Point d'entrée principal de l'application
+ *
+ * Gère :
+ * - L'authentification Supabase (connexion persistante)
+ * - La reconnexion automatique via localStorage (instantanée au refresh)
+ * - Vérification du token Supabase en arrière-plan
+ * - Le routing entre les pages (Login → GroupSelect → Group → Lobby → Dashboard)
+ * - La gestion multi-groupes
+ * - La réinitialisation du mot de passe (event PASSWORD_RECOVERY)
+ * - Détection du cold start Supabase (inactivité > 7 jours)
+ */
+
 import { useState, useEffect } from 'react'
 import LobbyPage from './pages/LobbyPage'
 import DashboardPage from './pages/DashboardPage'
@@ -10,6 +23,10 @@ import { useRangeStore } from './stores/rangeStore'
 
 const LOCAL_USER_KEY = 'poker_user'
 
+/**
+ * Sauvegarde les infos utilisateur dans le localStorage.
+ * Inclut les memberships avec leurs groupes imbriqués pour un chargement instantané au refresh.
+ */
 function saveUserToLocal(user, memberships) {
   localStorage.setItem(LOCAL_USER_KEY, JSON.stringify({
     id: user.id,
@@ -19,6 +36,10 @@ function saveUserToLocal(user, memberships) {
   }))
 }
 
+/**
+ * Relit les infos utilisateur depuis le localStorage.
+ * Retourne null si rien n'est stocké ou si les données sont invalides.
+ */
 function loadUserFromLocal() {
   try {
     const raw = localStorage.getItem(LOCAL_USER_KEY)
@@ -28,7 +49,12 @@ function loadUserFromLocal() {
   }
 }
 
-async function handleAuthSession(authSession, { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading, setSupabaseReady }) {
+/**
+ * Gère une session Supabase authentifiée.
+ * Récupère les memberships depuis la DB, met à jour le cache local,
+ * et initialise le routing selon le nombre de groupes.
+ */
+async function handleAuthSession(authSession, { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }) {
   setAuthUser(authSession.user)
 
   const { data: memberData } = await supabase
@@ -36,8 +62,11 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
     .select('*, groups(*)')
     .eq('user_id', authSession.user.id)
 
+  // Protection contre null/undefined — s'assure que memberships est toujours un tableau
   const memberships = Array.isArray(memberData) ? memberData : []
   setMemberships(memberships)
+
+  // Sauvegarde dans le localStorage avec la structure complète groups imbriquée
   saveUserToLocal(authSession.user, memberships)
 
   if (memberships.length === 1) {
@@ -50,6 +79,10 @@ async function handleAuthSession(authSession, { setAuthUser, setMemberships, set
   setLoading(false)
 }
 
+/**
+ * Tente de reconnecter à une session live sauvegardée dans le localStorage.
+ * Si le joueur ou la session n'existe plus en base, nettoie le localStorage.
+ */
 async function restoreSession(membership, { setPlayer, setSession }) {
   const saved = localStorage.getItem('poker_session')
   if (!saved) return
@@ -91,22 +124,22 @@ async function restoreSession(membership, { setPlayer, setSession }) {
 
 export default function App() {
   const [authUser, setAuthUser] = useState(null)
-  const [memberships, setMemberships] = useState([])
-  const [membership, setMembership] = useState(null)
+  const [memberships, setMemberships] = useState([])  // Tous les groupes de l'utilisateur
+  const [membership, setMembership] = useState(null)  // Groupe actif sélectionné
   const [session, setSession] = useState(null)
   const [player, setPlayer] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [authError, setAuthError] = useState(null)
-  const [slowConnection, setSlowConnection] = useState(false)
-  const [coldStart, setColdStart] = useState(false)
+  const [authError, setAuthError] = useState(null)      // Erreur réseau affichée à l'écran
+  const [slowConnection, setSlowConnection] = useState(false)  // Connexion lente détectée
+  const [coldStart, setColdStart] = useState(false)     // Cold start Supabase détecté
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
-  const [supabaseReady, setSupabaseReady] = useState(false)
 
   const reset = useRangeStore((state) => state.reset)
 
   useEffect(() => {
-    const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading, setSupabaseReady }
+    const handlers = { setAuthUser, setMemberships, setMembership, setPlayer, setSession, setLoading }
 
+    // ─── Détection d'un lien de recovery dans l'URL ──────────────────────────
     const hash = window.location.hash
     if (hash.includes('type=recovery')) {
       setIsPasswordRecovery(true)
@@ -114,17 +147,37 @@ export default function App() {
       return
     }
 
-    const slowTimeout = setTimeout(() => setSlowConnection(true), 5000)
-    const coldStartTimeout = setTimeout(() => setColdStart(true), 10000)
-    const absoluteTimeout = setTimeout(() => setLoading(false), 35000)
+    // ─── Timeout connexion lente (5s) ────────────────────────────────────────
+    // Après 5s sans réponse → on informe l'utilisateur que c'est lent
+    const slowTimeout = setTimeout(() => {
+      setSlowConnection(true)
+    }, 5000)
 
+    // ─── Timeout cold start Supabase (10s) ───────────────────────────────────
+    // Après 10s → on explique que la base de données se réactive
+    // (cas typique après 7 jours d'inactivité sur le plan gratuit)
+    const coldStartTimeout = setTimeout(() => {
+      setColdStart(true)
+    }, 10000)
+
+    // ─── Timeout absolu (35s) ────────────────────────────────────────────────
+    // Laisse suffisamment de temps pour un cold start Supabase (20-30s)
+    // Au-delà, on abandonne et on affiche la page de connexion
+    const absoluteTimeout = setTimeout(() => {
+      setLoading(false)
+    }, 35000)
+
+    // ─── Chargement depuis le localStorage ───────────────────────────────────
+    // Chargement instantané si les memberships ont la structure groups imbriquée
     const cached = loadUserFromLocal()
     if (cached) {
       const validMemberships = (cached.memberships ?? []).filter(m => m?.groups)
       if (validMemberships.length > 0) {
         setAuthUser({ id: cached.id, email: cached.email, user_metadata: { username: cached.username } })
         setMemberships(validMemberships)
-        if (validMemberships.length === 1) setMembership(validMemberships[0])
+        if (validMemberships.length === 1) {
+          setMembership(validMemberships[0])
+        }
         clearTimeout(slowTimeout)
         clearTimeout(coldStartTimeout)
         clearTimeout(absoluteTimeout)
@@ -132,6 +185,7 @@ export default function App() {
       }
     }
 
+    // ─── Vérification Supabase en arrière-plan ───────────────────────────────
     let handled = false
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
@@ -170,11 +224,10 @@ export default function App() {
         return
       }
 
-      // Token validé — les appels DB peuvent passer dès maintenant
-      setSupabaseReady(true)
       await handleAuthSession(authSession, handlers)
     })
 
+    // ─── Fallback getSession après 3s si onAuthStateChange muet ─────────────
     const fallbackTimeout = setTimeout(async () => {
       if (handled) return
       handled = true
@@ -195,7 +248,6 @@ export default function App() {
         clearTimeout(absoluteTimeout)
         setSlowConnection(false)
         setColdStart(false)
-        setSupabaseReady(true)
         await handleAuthSession(authSession, handlers)
       } catch (e) {
         if (!cached) {
@@ -233,18 +285,16 @@ export default function App() {
     setPlayer(null)
   }
 
-  const handleLogout = () => {
-    // Nettoie l'état immédiatement — ne pas attendre signOut() qui peut hang sur mobile
+  const handleLogout = async () => {
     localStorage.removeItem('poker_session')
     localStorage.removeItem(LOCAL_USER_KEY)
     reset()
+    await supabase.auth.signOut()
     setAuthUser(null)
     setMemberships([])
     setMembership(null)
     setSession(null)
     setPlayer(null)
-    // signOut en fire-and-forget
-    supabase.auth.signOut().catch(() => {})
   }
 
   const handleGroupJoined = (memberData) => {
@@ -292,42 +342,104 @@ export default function App() {
     setPlayer(null)
   }
 
+  // ─── Si authUser chargé depuis cache mais memberships pas encore disponibles ──
+  // On attend Supabase pour éviter d'afficher GroupPage par erreur
   const waitingForMemberships = authUser && memberships.length === 0 && loadUserFromLocal() !== null
 
+  // ─── Écran de chargement ─────────────────────────────────────────────────
   if (loading || waitingForMemberships) {
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#0a0a0a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', padding: '24px' }}>
+      <div style={{
+        minHeight: '100vh',
+        backgroundColor: '#0a0a0a',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '16px',
+        padding: '24px',
+      }}>
+        {/* Spinner animé */}
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}>
           <circle cx="12" cy="12" r="10" strokeOpacity="0.2"/>
           <path d="M12 2a10 10 0 0 1 10 10"/>
           <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
         </svg>
-        {!slowConnection && !coldStart && <p style={{ color: '#666', fontSize: '14px', margin: 0 }}>Chargement...</p>}
-        {slowConnection && !coldStart && <p style={{ color: '#f59e0b', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '280px' }}>Connexion en cours, merci de patienter...</p>}
+
+        {/* Message selon l'état de la connexion */}
+        {!slowConnection && !coldStart && (
+          <p style={{ color: '#666', fontSize: '14px', margin: 0 }}>
+            Chargement...
+          </p>
+        )}
+
+        {slowConnection && !coldStart && (
+          <p style={{ color: '#f59e0b', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '280px' }}>
+            Connexion en cours, merci de patienter...
+          </p>
+        )}
+
         {coldStart && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <p style={{ color: '#f59e0b', fontSize: '14px', margin: 0, textAlign: 'center', maxWidth: '300px', fontWeight: 'bold' }}>⏳ Réactivation du serveur en cours</p>
-            <p style={{ color: '#666', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '300px', lineHeight: '1.5' }}>Le serveur se réveille après une période d'inactivité. Cela peut prendre 20 à 30 secondes.</p>
+            <p style={{ color: '#f59e0b', fontSize: '14px', margin: 0, textAlign: 'center', maxWidth: '300px', fontWeight: 'bold' }}>
+              ⏳ Réactivation du serveur en cours
+            </p>
+            <p style={{ color: '#666', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '300px', lineHeight: '1.5' }}>
+              Le serveur se réveille après une période d'inactivité. Cela peut prendre 20 à 30 secondes. Merci de ne pas fermer cette page.
+            </p>
           </div>
         )}
+
+        {/* Erreur réseau */}
         {authError && (
           <>
-            <p style={{ color: '#ef4444', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '280px' }}>{authError}</p>
-            <button onClick={() => window.location.reload()} style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', backgroundColor: '#22c55e', color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>Réessayer</button>
+            <p style={{ color: '#ef4444', fontSize: '13px', margin: 0, textAlign: 'center', maxWidth: '280px' }}>
+              {authError}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              style={{
+                padding: '10px 24px',
+                borderRadius: '8px',
+                border: 'none',
+                backgroundColor: '#22c55e',
+                color: 'white',
+                fontWeight: 'bold',
+                fontSize: '14px',
+                cursor: 'pointer',
+              }}
+            >
+              Réessayer
+            </button>
           </>
         )}
       </div>
     )
   }
 
+  // ─── Réinitialisation du mot de passe ────────────────────────────────────
   if (isPasswordRecovery) {
-    return <ResetPasswordPage onDone={() => { setIsPasswordRecovery(false); window.history.replaceState(null, '', window.location.pathname) }} />
+    return (
+      <ResetPasswordPage
+        onDone={() => {
+          setIsPasswordRecovery(false)
+          window.history.replaceState(null, '', window.location.pathname)
+        }}
+      />
+    )
   }
 
+  // ─── Routing principal ───────────────────────────────────────────────────
   if (!authUser) return <LoginPage />
 
   if (authUser && memberships.length > 1 && !membership) {
-    return <GroupSelectPage memberships={memberships} onSelect={handleSelectGroup} authUser={authUser} />
+    return (
+      <GroupSelectPage
+        memberships={memberships}
+        onSelect={handleSelectGroup}
+        authUser={authUser}
+      />
+    )
   }
 
   if (!membership) return <GroupPage user={authUser} onGroupJoined={handleGroupJoined} />
@@ -340,7 +452,6 @@ export default function App() {
       onSwitchGroup={memberships.length > 1 ? handleSwitchGroup : null}
       onLeaveGroup={handleLeaveGroup}
       authUser={authUser}
-      supabaseReady={supabaseReady}
     />
   )
 
