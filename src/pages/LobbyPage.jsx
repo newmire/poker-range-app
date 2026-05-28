@@ -11,6 +11,7 @@ import {
   updateLastSeen,
   leaveGroup,
 } from '../lib/session'
+import { supabase } from '../lib/supabase'
 import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
 import GroupPage from './GroupPage'
@@ -23,7 +24,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   const [activeSession, setActiveSession] = useState(null)
 
   // ─── Fallback : débloque le bouton après 5s si supabaseReady n'arrive pas ──
-  // Protège contre les cas où onAuthStateChange est lent ou ne fire pas
   const [localReady, setLocalReady] = useState(supabaseReady)
   useEffect(() => {
     if (supabaseReady) { setLocalReady(true); return }
@@ -40,12 +40,10 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   const [copiedInvite, setCopiedInvite] = useState(false)
 
   const canShare = typeof navigator !== 'undefined' && !!navigator.share
-
   const username = membership.username
   const groupId = membership.group_id
   const isMaster = membership.role === 'master'
 
-  // ─── Heartbeat ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!membership?.id) return
     updateLastSeen(membership.id)
@@ -53,7 +51,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     return () => clearInterval(interval)
   }, [membership])
 
-  // ─── Détection automatique de la session active ───────────────────────────
   useEffect(() => {
     if (!groupId) return
     getActiveSession(groupId).then(setActiveSession)
@@ -72,15 +69,26 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     setLoading(true)
     setError(null)
     try {
+      // getUser() fait un appel direct au serveur d'auth (pas de queue interne).
+      // C'est le pattern Supabase pour débloquer le client après un refresh de page mobile.
+      const { data: { user }, error: userError } = await withTimeout(
+        supabase.auth.getUser(),
+        8000,
+        'auth_timeout'
+      )
+      if (userError || !user) {
+        setError('Session expirée, veuillez vous reconnecter.')
+        return
+      }
       const { session, player } = await withTimeout(
         createSession(username, {}, groupId),
-        20000,
+        15000,
         'La création a pris trop de temps. Vérifiez votre connexion et réessayez.'
       )
       onJoined({ session, player })
     } catch (e) {
       const msg = e.message ?? ''
-      if (msg.includes('JWT') || msg.includes('auth') || msg.includes('401') || msg.includes('403')) {
+      if (msg === 'auth_timeout' || msg.includes('JWT') || msg.includes('auth') || msg.includes('401') || msg.includes('403')) {
         setError('Session expirée, veuillez vous reconnecter.')
       } else {
         setError(msg || 'Une erreur est survenue, réessayez.')
@@ -94,15 +102,24 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     setLoading(true)
     setError(null)
     try {
+      const { data: { user }, error: userError } = await withTimeout(
+        supabase.auth.getUser(),
+        8000,
+        'auth_timeout'
+      )
+      if (userError || !user) {
+        setError('Session expirée, veuillez vous reconnecter.')
+        return
+      }
       const { session, player } = await withTimeout(
         joinSession(sessionCode ?? code.trim(), username),
-        20000,
+        15000,
         'La connexion a pris trop de temps. Vérifiez votre connexion et réessayez.'
       )
       onJoined({ session, player })
     } catch (e) {
       const msg = e.message ?? ''
-      if (msg.includes('JWT') || msg.includes('auth') || msg.includes('401') || msg.includes('403')) {
+      if (msg === 'auth_timeout' || msg.includes('JWT') || msg.includes('auth') || msg.includes('401') || msg.includes('403')) {
         setError('Session expirée, veuillez vous reconnecter.')
       } else {
         setError(msg || 'Session introuvable ou erreur réseau.')
