@@ -77,8 +77,8 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
 
   /**
    * Crée une nouvelle session (master uniquement).
-   * Timeout à 35s : les 4 appels DB de createSession peuvent être lents sur mobile
-   * après un refresh, mais la session finit par se créer côté serveur.
+   * Timeout à 60s : les 4 appels DB de createSession peuvent être très lents
+   * sur mobile après un refresh (latence Supabase + reconnexion SDK).
    */
   const handleCreate = async () => {
     setLoading(true)
@@ -86,7 +86,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     try {
       const { session, player } = await withTimeout(
         createSession(username, {}, groupId),
-        35000,
+        60000,
         'La création a pris trop de temps. Vérifiez votre connexion et réessayez.'
       )
       onJoined({ session, player })
@@ -108,7 +108,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     try {
       const { session, player } = await withTimeout(
         joinSession(sessionCode ?? code.trim(), username),
-        35000,
+        60000,
         'La connexion a pris trop de temps. Vérifiez votre connexion et réessayez.'
       )
       onJoined({ session, player })
