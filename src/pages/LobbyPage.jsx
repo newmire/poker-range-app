@@ -7,7 +7,6 @@ import {
   updateLastSeen,
   leaveGroup,
 } from '../lib/session'
-import { supabase } from '../lib/supabase'
 import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
 import GroupPage from './GroupPage'
@@ -19,14 +18,14 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   const [error, setError] = useState(null)
   const [activeSession, setActiveSession] = useState(null)
 
-  // Fallback local : débloque après 5s si supabaseReady n'arrive pas
-  const [localReady, setLocalReady] = useState(supabaseReady)
+  // Après 15s sans confirmation auth, affiche "Reconnecter" plutôt que
+  // de débloquer un bouton qui échouerait (réseau pas encore prêt)
+  const [showReconnect, setShowReconnect] = useState(false)
   useEffect(() => {
-    if (supabaseReady) { setLocalReady(true); return }
-    const t = setTimeout(() => setLocalReady(true), 5000)
+    if (supabaseReady) { setShowReconnect(false); return }
+    const t = setTimeout(() => setShowReconnect(true), 15000)
     return () => clearTimeout(t)
   }, [supabaseReady])
-  const ready = supabaseReady || localReady
 
   const [showLibrary, setShowLibrary] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
@@ -65,18 +64,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     setLoading(true)
     setError(null)
     try {
-      // getUser() valide le token directement avec le serveur d'auth.
-      // Débloque les requêtes DB Supabase bloquées par le refresh de token mobile.
-      const { data: { user }, error: userError } = await withTimeout(
-        supabase.auth.getUser(),
-        8000,
-        'network_timeout'
-      )
-      if (userError || !user) {
-        // Erreur auth confirmée (token invalide) → déconnexion automatique
-        onLogout()
-        return
-      }
       const { session, player } = await withTimeout(
         createSession(username, {}, groupId),
         15000,
@@ -85,10 +72,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       onJoined({ session, player })
     } catch (e) {
       const msg = e.message ?? ''
-      if (msg === 'network_timeout') {
-        // Réseau trop lent — ne pas déconnecter, laisser réessayer
-        setError('Réseau trop lent. Réessayez dans quelques secondes.')
-      } else if (msg.includes('JWT') || msg.includes('401') || msg.includes('403')) {
+      if (msg.includes('JWT') || msg.includes('401') || msg.includes('403')) {
         onLogout()
       } else {
         setError(msg || 'Une erreur est survenue, réessayez.')
@@ -102,15 +86,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     setLoading(true)
     setError(null)
     try {
-      const { data: { user }, error: userError } = await withTimeout(
-        supabase.auth.getUser(),
-        8000,
-        'network_timeout'
-      )
-      if (userError || !user) {
-        onLogout()
-        return
-      }
       const { session, player } = await withTimeout(
         joinSession(sessionCode ?? code.trim(), username),
         15000,
@@ -119,9 +94,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       onJoined({ session, player })
     } catch (e) {
       const msg = e.message ?? ''
-      if (msg === 'network_timeout') {
-        setError('Réseau trop lent. Réessayez dans quelques secondes.')
-      } else if (msg.includes('JWT') || msg.includes('401') || msg.includes('403')) {
+      if (msg.includes('JWT') || msg.includes('401') || msg.includes('403')) {
         onLogout()
       } else {
         setError(msg || 'Session introuvable ou erreur réseau.')
@@ -190,9 +163,9 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
             <button
               style={styles.btnPrimary}
               onClick={() => handleJoin(activeSession.code)}
-              disabled={loading || !ready}
+              disabled={loading || !supabaseReady}
             >
-              {loading ? 'Connexion...' : !ready ? '⏳ Synchronisation...' : 'Rejoindre la session'}
+              {loading ? 'Connexion...' : !supabaseReady ? '⏳ Synchronisation...' : 'Rejoindre la session'}
             </button>
           </div>
         )}
@@ -200,10 +173,17 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
         {!mode && (
           <div style={styles.buttons}>
             {isMaster && (
-              <button style={styles.btnPrimary} onClick={handleCreate} disabled={loading || !ready}>
-                {loading ? 'Création...' : !ready ? '⏳ Synchronisation...' : 'Créer une session'}
+              <button style={styles.btnPrimary} onClick={handleCreate} disabled={loading || !supabaseReady}>
+                {loading ? 'Création...' : !supabaseReady ? '⏳ Synchronisation...' : 'Créer une session'}
               </button>
             )}
+
+            {!supabaseReady && showReconnect && (
+              <button style={styles.btnSecondary} onClick={onLogout}>
+                🔄 Reconnecter
+              </button>
+            )}
+
             {!activeSession && !isMaster && (
               <button style={styles.btnSecondary} onClick={() => setMode('join')}>
                 Rejoindre avec un code
@@ -243,8 +223,8 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
               maxLength={6}
             />
             {error && <p style={styles.error}>{error}</p>}
-            <button style={styles.btnPrimary} onClick={() => handleJoin()} disabled={loading || !ready}>
-              {loading ? 'Connexion...' : !ready ? '⏳ Synchronisation...' : 'Rejoindre'}
+            <button style={styles.btnPrimary} onClick={() => handleJoin()} disabled={loading || !supabaseReady}>
+              {loading ? 'Connexion...' : !supabaseReady ? '⏳ Synchronisation...' : 'Rejoindre'}
             </button>
             <button style={styles.btnSecondary} onClick={() => { setMode(null); setError(null) }}>
               Retour
