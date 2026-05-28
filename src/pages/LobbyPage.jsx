@@ -18,8 +18,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   const [error, setError] = useState(null)
   const [activeSession, setActiveSession] = useState(null)
 
-  // Après 15s sans confirmation auth, affiche "Reconnecter" plutôt que
-  // de débloquer un bouton qui échouerait (réseau pas encore prêt)
   const [showReconnect, setShowReconnect] = useState(false)
   useEffect(() => {
     if (supabaseReady) { setShowReconnect(false); return }
@@ -71,12 +69,8 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       )
       onJoined({ session, player })
     } catch (e) {
-      const msg = e.message ?? ''
-      if (msg.includes('JWT') || msg.includes('401') || msg.includes('403')) {
-        onLogout()
-      } else {
-        setError(msg || 'Une erreur est survenue, réessayez.')
-      }
+      // DEBUG diagnostic — sera retiré après
+      setError('ERREUR: ' + (e.message || JSON.stringify(e) || 'inconnue'))
     } finally {
       setLoading(false)
     }
