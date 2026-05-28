@@ -23,7 +23,6 @@ import {
   updateLastSeen,
   leaveGroup,
 } from '../lib/session'
-import { supabase } from '../lib/supabase'
 import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
 import GroupPage from './GroupPage'
@@ -67,25 +66,32 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   }, [groupId])
 
   /**
+   * Wrapper qui rejette une promesse si elle prend plus de `ms` millisecondes.
+   * Évite les hangs infinis sur mobile où les appels Supabase peuvent être lents
+   * après un refresh de page (latence réseau + reconnexion interne du SDK).
+   */
+  const withTimeout = (promise, ms, message) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ])
+
+  /**
    * Crée une nouvelle session (master uniquement).
-   * Vérifie que la session Supabase est active avant de créer
-   * pour éviter les échecs silencieux sur mobile après un refresh.
+   * Timeout à 35s : les 4 appels DB de createSession peuvent être lents sur mobile
+   * après un refresh, mais la session finit par se créer côté serveur.
    */
   const handleCreate = async () => {
     setLoading(true)
     setError(null)
     try {
-      // Vérifie que le token Supabase est valide avant de créer
-      const { data: { session: authSession } } = await supabase.auth.getSession()
-      if (!authSession) {
-        setError('Session expirée, veuillez vous reconnecter.')
-        setLoading(false)
-        return
-      }
-      const { session, player } = await createSession(username, {}, groupId)
+      const { session, player } = await withTimeout(
+        createSession(username, {}, groupId),
+        35000,
+        'La création a pris trop de temps. Vérifiez votre connexion et réessayez.'
+      )
       onJoined({ session, player })
     } catch (e) {
-      setError(e.message)
+      setError(e.message || 'Une erreur est survenue, réessayez.')
     } finally {
       setLoading(false)
     }
@@ -95,23 +101,19 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
    * Rejoint une session via son code.
    * Si sessionCode est fourni, l'utilise directement (session active détectée).
    * Sinon, utilise le code saisi manuellement.
-   * Vérifie aussi que le token Supabase est valide.
    */
   const handleJoin = async (sessionCode) => {
     setLoading(true)
     setError(null)
     try {
-      // Vérifie que le token Supabase est valide avant de rejoindre
-      const { data: { session: authSession } } = await supabase.auth.getSession()
-      if (!authSession) {
-        setError('Session expirée, veuillez vous reconnecter.')
-        setLoading(false)
-        return
-      }
-      const { session, player } = await joinSession(sessionCode ?? code.trim(), username)
+      const { session, player } = await withTimeout(
+        joinSession(sessionCode ?? code.trim(), username),
+        35000,
+        'La connexion a pris trop de temps. Vérifiez votre connexion et réessayez.'
+      )
       onJoined({ session, player })
     } catch (e) {
-      setError(e.message)
+      setError(e.message || 'Session introuvable ou erreur réseau.')
     } finally {
       setLoading(false)
     }
