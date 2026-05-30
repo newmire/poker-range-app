@@ -1,7 +1,3 @@
-/**
- * LobbyPage.jsx — Page d'accueil après connexion au groupe
- */
-
 import { useState, useEffect } from 'react'
 import {
   createSession,
@@ -10,6 +6,7 @@ import {
   subscribeToGroupSessions,
   updateLastSeen,
   leaveGroup,
+  setDebugCallback,
 } from '../lib/session'
 import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
@@ -34,7 +31,15 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   const groupId = membership.group_id
   const isMaster = membership.role === 'master'
 
-  const log = (msg) => setDebugLog(prev => [...prev, `${new Date().toISOString().slice(11,19)} ${msg}`])
+  const log = (msg) => {
+    const line = new Date().toISOString().slice(11, 19) + ' ' + msg
+    setDebugLog(prev => [...prev, line])
+  }
+
+  const withTimeout = (promise, ms, message) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ])
 
   useEffect(() => {
     if (!membership?.id) return
@@ -52,29 +57,27 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     return () => sub.unsubscribe()
   }, [groupId])
 
-  const withTimeout = (promise, ms, message) => Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
-  ])
-
   const handleCreate = async () => {
     setLoading(true)
     setError(null)
     setDebugLog([])
+    setDebugCallback(log)
     try {
       log('1. handleCreate démarré')
-      log('2. username: ' + username + ' groupId: ' + groupId)
+      log('2. username:' + username + ' groupId:' + groupId?.slice(0, 8))
       log('3. appel createSession...')
       const { session, player } = await withTimeout(
         createSession(username, {}, groupId),
         60000,
         'timeout 60s'
       )
-      log('4. succès! session: ' + session?.id)
+      log('4. succès! session:' + session?.id?.slice(0, 8))
+      setDebugCallback(null)
       onJoined({ session, player })
     } catch (e) {
       log('ERR: ' + e?.message + ' code:' + e?.code + ' status:' + e?.status)
       setError(e.message || 'Erreur inconnue')
+      setDebugCallback(null)
     } finally {
       setLoading(false)
     }
@@ -87,7 +90,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       const { session, player } = await withTimeout(
         joinSession(sessionCode ?? code.trim(), username),
         60000,
-        'La connexion a pris trop de temps. Vérifiez votre connexion et réessayez.'
+        'La connexion a pris trop de temps.'
       )
       onJoined({ session, player })
     } catch (e) {
@@ -203,11 +206,10 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
 
         {!mode && error && <p style={styles.error}>{error}</p>}
 
-        {/* ── Debug log visible ── */}
         {debugLog.length > 0 && (
           <div style={{ width: '100%', backgroundColor: '#0a0a0a', border: '1px solid #333', borderRadius: '8px', padding: '8px', marginTop: '8px' }}>
             {debugLog.map((line, i) => (
-              <p key={i} style={{ color: line.startsWith('ERR') ? '#ef4444' : '#22c55e', fontSize: '11px', margin: '2px 0', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+              <p key={i} style={{ color: line.includes('ERR') ? '#ef4444' : '#22c55e', fontSize: '11px', margin: '2px 0', fontFamily: 'monospace', wordBreak: 'break-all' }}>
                 {line}
               </p>
             ))}
