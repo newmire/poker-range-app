@@ -1,3 +1,7 @@
+/**
+ * LobbyPage.jsx — Page d'accueil après connexion au groupe
+ */
+
 import { useState, useEffect } from 'react'
 import {
   createSession,
@@ -6,7 +10,6 @@ import {
   subscribeToGroupSessions,
   updateLastSeen,
   leaveGroup,
-  setDebugCallback,
 } from '../lib/session'
 import LibraryPage from './LibraryPage'
 import MembersPage from './MembersPage'
@@ -17,7 +20,6 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [debugLog, setDebugLog] = useState([])
   const [activeSession, setActiveSession] = useState(null)
   const [showLibrary, setShowLibrary] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
@@ -31,16 +33,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
   const groupId = membership.group_id
   const isMaster = membership.role === 'master'
 
-  const log = (msg) => {
-    const line = new Date().toISOString().slice(11, 19) + ' ' + msg
-    setDebugLog(prev => [...prev, line])
-  }
-
-  const withTimeout = (promise, ms, message) => Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
-  ])
-
+  // ─── Heartbeat ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!membership?.id) return
     updateLastSeen(membership.id)
@@ -48,6 +41,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     return () => clearInterval(interval)
   }, [membership])
 
+  // ─── Détection automatique de la session active ───────────────────────────
   useEffect(() => {
     if (!groupId) return
     getActiveSession(groupId).then(setActiveSession)
@@ -57,27 +51,23 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
     return () => sub.unsubscribe()
   }, [groupId])
 
+  const withTimeout = (promise, ms, message) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ])
+
   const handleCreate = async () => {
     setLoading(true)
     setError(null)
-    setDebugLog([])
-    setDebugCallback(log)
     try {
-      log('1. handleCreate démarré')
-      log('2. username:' + username + ' groupId:' + groupId?.slice(0, 8))
-      log('3. appel createSession...')
       const { session, player } = await withTimeout(
         createSession(username, {}, groupId),
         60000,
-        'timeout 60s'
+        'La création a pris trop de temps. Vérifiez votre connexion et réessayez.'
       )
-      log('4. succès! session:' + session?.id?.slice(0, 8))
-      setDebugCallback(null)
       onJoined({ session, player })
     } catch (e) {
-      log('ERR: ' + e?.message + ' code:' + e?.code + ' status:' + e?.status)
-      setError(e.message || 'Erreur inconnue')
-      setDebugCallback(null)
+      setError(e.message || 'Une erreur est survenue, réessayez.')
     } finally {
       setLoading(false)
     }
@@ -90,7 +80,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
       const { session, player } = await withTimeout(
         joinSession(sessionCode ?? code.trim(), username),
         60000,
-        'La connexion a pris trop de temps.'
+        'La connexion a pris trop de temps. Vérifiez votre connexion et réessayez.'
       )
       onJoined({ session, player })
     } catch (e) {
@@ -149,8 +139,9 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={styles.activeSessionCode}>#{activeSession.code}</span>
               <button
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: copiedSession ? '#22c55e' : '#666', fontSize: '16px', padding: '2px' }}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: copiedSession ? '#22c55e' : '#666', fontSize: '16px', padding: '2px', transition: 'color 0.2s' }}
                 onClick={handleCopySessionCode}
+                title="Copier le code"
               >
                 {copiedSession ? '✓' : '📋'}
               </button>
@@ -206,24 +197,15 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
 
         {!mode && error && <p style={styles.error}>{error}</p>}
 
-        {debugLog.length > 0 && (
-          <div style={{ width: '100%', backgroundColor: '#0a0a0a', border: '1px solid #333', borderRadius: '8px', padding: '8px', marginTop: '8px' }}>
-            {debugLog.map((line, i) => (
-              <p key={i} style={{ color: line.includes('ERR') ? '#ef4444' : '#22c55e', fontSize: '11px', margin: '2px 0', fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                {line}
-              </p>
-            ))}
-          </div>
-        )}
-
         {isMaster && membership.groups?.invite_code && (
           <div style={styles.inviteBox}>
             <p style={styles.inviteLabel}>Code d'invitation du groupe</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={styles.inviteCode}>{membership.groups.invite_code}</span>
               <button
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: copiedInvite ? '#22c55e' : '#666', fontSize: '16px', padding: '2px' }}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: copiedInvite ? '#22c55e' : '#666', fontSize: '16px', padding: '2px', transition: 'color 0.2s' }}
                 onClick={handleCopyInviteCode}
+                title="Copier le code d'invitation"
               >
                 {copiedInvite ? '✓' : '📋'}
               </button>
@@ -231,6 +213,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
                 <button
                   style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#666', fontSize: '16px', padding: '2px' }}
                   onClick={handleShareInvite}
+                  title="Partager le code d'invitation"
                 >
                   📤
                 </button>
@@ -248,7 +231,7 @@ export default function LobbyPage({ membership, onJoined, onLogout, onSwitchGrou
             <h3 style={styles.modalTitle}>🚪 Quitter le groupe</h3>
             <p style={styles.modalText}>
               Tu vas quitter <strong style={{ color: 'white' }}>{membership.groups?.name}</strong>.
-              Tes ranges personnelles seront supprimées.
+              Tes ranges personnelles seront supprimées. Tu pourras rejoindre à nouveau avec le code d'invitation.
             </p>
             <button style={styles.btnDanger} onClick={handleLeaveGroup}>Confirmer</button>
             <button style={styles.btnSecondary} onClick={() => setShowLeaveConfirm(false)}>Annuler</button>

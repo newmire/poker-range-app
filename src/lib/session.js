@@ -1,53 +1,62 @@
 /**
  * session.js — Toutes les fonctions d'interaction avec Supabase
+ *
+ * Couvre :
+ * - Création et gestion des sessions live
+ * - Gestion des joueurs
+ * - Sauvegarde des ranges et contextes
+ * - Bibliothèque de ranges
+ * - Gestion des membres du groupe
+ * - Realtime (subscriptions)
  */
 
 import { supabase } from './supabase'
 
+/**
+ * Génère un code de session aléatoire à 6 caractères.
+ * Utilise un alphabet sans caractères ambigus (pas de 0/O, 1/I).
+ */
 export function generateCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
 }
 
-// Callback de debug — branché depuis LobbyPage
-let _debugLog = null
-export function setDebugCallback(fn) { _debugLog = fn }
-function dbg(msg) { if (_debugLog) _debugLog(msg) }
-
+/**
+ * Crée une nouvelle session live et y ajoute le master comme premier joueur.
+ * 3 appels DB : INSERT session → INSERT player → UPDATE+SELECT session.
+ * Pas de retry pour éviter les enregistrements orphelins en cas d'échec partiel.
+ */
 export async function createSession(masterName, context, groupId) {
   const code = generateCode()
-  dbg('DB1: insert session code=' + code)
 
   const { data: session, error: sessionError } = await supabase
     .from('sessions')
     .insert({ code, context, group_id: groupId })
     .select()
     .single()
-  dbg('DB2: session=' + JSON.stringify(session?.id) + ' err=' + JSON.stringify(sessionError?.message))
   if (sessionError) throw sessionError
 
-  dbg('DB3: insert player...')
   const { data: player, error: playerError } = await supabase
     .from('players')
     .insert({ session_id: session.id, name: masterName, role: 'master' })
     .select()
     .single()
-  dbg('DB4: player=' + JSON.stringify(player?.id) + ' err=' + JSON.stringify(playerError?.message))
   if (playerError) throw playerError
 
-  dbg('DB5: update session master_id...')
   const { data: updatedSession, error: updateError } = await supabase
     .from('sessions')
     .update({ master_id: player.id })
     .eq('id', session.id)
     .select()
     .single()
-  dbg('DB6: done err=' + JSON.stringify(updateError?.message))
   if (updateError) throw updateError
 
   return { session: updatedSession, player }
 }
 
+/**
+ * Rejoint une session existante via son code.
+ */
 export async function joinSession(code, playerName) {
   const { data: session, error: sessionError } = await supabase
     .from('sessions')
