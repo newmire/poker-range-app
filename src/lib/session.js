@@ -23,10 +23,8 @@ export function generateCode() {
 
 /**
  * Crée une nouvelle session live et y ajoute le master comme premier joueur.
- *
- * Pas de retry : en cas d'échec partiel (session ou player déjà insérés),
- * un retry recrée des enregistrements orphelins en DB. On laisse LobbyPage
- * gérer le timeout et l'affichage de l'erreur.
+ * 3 appels DB en séquence : INSERT session → INSERT player → UPDATE+SELECT session.
+ * Pas de retry pour éviter les enregistrements orphelins en cas d'échec partiel.
  *
  * @param {string} masterName - Pseudo du master
  * @param {object} context - Contexte de la session (optionnel)
@@ -50,17 +48,13 @@ export async function createSession(masterName, context, groupId) {
     .single()
   if (playerError) throw playerError
 
-  await supabase
+  const { data: updatedSession, error: updateError } = await supabase
     .from('sessions')
     .update({ master_id: player.id })
     .eq('id', session.id)
-
-  const { data: updatedSession, error: fetchError } = await supabase
-    .from('sessions')
     .select()
-    .eq('id', session.id)
     .single()
-  if (fetchError) throw fetchError
+  if (updateError) throw updateError
 
   return { session: updatedSession, player }
 }
